@@ -41,6 +41,7 @@ type Target struct {
 	ConflictedFiles []string `json:"conflictedFiles,omitempty"`
 	CreatedBranch   string   `json:"createdBranch,omitempty"`
 	PullRequestURL  string   `json:"pullRequestURL,omitempty"`
+	Error           string   `json:"error,omitempty"`
 }
 
 type Store struct {

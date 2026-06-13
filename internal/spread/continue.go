@@ -47,7 +47,7 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 				_ = store.Save(run)
 				return run, nil
 			}
-			run.Targets[i].Status = state.StatusFailed
+			setTargetError(&run.Targets[i], state.StatusFailed, err)
 			_ = store.Save(run)
 			return run, err
 		}
@@ -109,7 +109,7 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 	switch plan.Request.Mode {
 	case ModeDirect:
 		if err := pushTarget(plan, target, root); err != nil {
-			run.Targets[index].Status = state.StatusRejected
+			setTargetError(&run.Targets[index], state.StatusRejected, err)
 			return err
 		}
 	case ModePR:
@@ -122,7 +122,7 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 		}
 		if plan.Request.Kind == KindBranch {
 			if err := pushBranchHead(plan, head, root); err != nil {
-				run.Targets[index].Status = state.StatusRejected
+				setTargetError(&run.Targets[index], state.StatusRejected, err)
 				return err
 			}
 		} else {
@@ -131,13 +131,13 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 			}
 			run.Targets[index].CreatedBranch = head
 			if err := pushHead(plan, target, head, root); err != nil {
-				run.Targets[index].Status = state.StatusRejected
+				setTargetError(&run.Targets[index], state.StatusRejected, err)
 				return err
 			}
 		}
 		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, "Propagate changes to "+target.Branch)
 		if err != nil {
-			run.Targets[index].Status = state.StatusFailed
+			setTargetError(&run.Targets[index], state.StatusFailed, err)
 			return err
 		}
 		run.Targets[index].PullRequestURL = created.URL

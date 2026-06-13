@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -216,24 +217,12 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	input.Config = ctx.config
-	input.CurrentBranch = ctx.currentBranch
-
-	req, err := spread.Normalize(input)
+	plan, run, err := prepareAndMaybeExecute(ctx, input, planOnly)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-	var client ghclient.Client
-	if needsGitHubClient(req, planOnly) {
-		client, err = prepareGitHub(&req, ctx)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+		if errors.Is(err, errInvalidInput) {
+			fmt.Fprintln(stderr, strings.TrimPrefix(err.Error(), errInvalidInput.Error()+": "))
+			return 2
 		}
-	}
-	plan, err := buildPlan(req, ctx.git, client)
-	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -241,13 +230,39 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 		printPlan(stdout, plan)
 		return 0
 	}
-	run, err := executePlan(plan, ctx.git, ctx.store, client)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	printRun(stdout, run)
 	return 0
+}
+
+var errInvalidInput = errors.New("invalid input")
+
+func prepareAndMaybeExecute(ctx repoContext, input spread.CLIInput, planOnly bool) (spread.Plan, state.Run, error) {
+	input.Config = ctx.config
+	input.CurrentBranch = ctx.currentBranch
+
+	req, err := spread.Normalize(input)
+	if err != nil {
+		return spread.Plan{}, state.Run{}, fmt.Errorf("%w: %v", errInvalidInput, err)
+	}
+	var client ghclient.Client
+	if needsGitHubClient(req, planOnly) {
+		client, err = prepareGitHub(&req, ctx)
+		if err != nil {
+			return spread.Plan{}, state.Run{}, err
+		}
+	}
+	plan, err := buildPlan(req, ctx.git, client)
+	if err != nil {
+		return spread.Plan{}, state.Run{}, err
+	}
+	if planOnly {
+		return plan, state.Run{}, nil
+	}
+	run, err := executePlan(plan, ctx.git, ctx.store, client)
+	if err != nil {
+		return plan, run, err
+	}
+	return plan, run, nil
 }
 
 func needsGitHubClient(req spread.Request, planOnly bool) bool {
@@ -386,7 +401,15 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 	}
 	run, err := ctx.store.Load()
 	if errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(stdout, "No active Git Spread run.")
+		tasks := taskItemsFromConfig(ctx.config)
+		if interactiveOutput(stdout) {
+			if err := tui.RunTasksWithHandler(tasks, taskActionHandler(ctx, tasks)); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
+		}
+		fmt.Fprint(stdout, tui.NewTaskModel(tasks).View().Content)
 		return 0
 	}
 	if err != nil {
@@ -402,6 +425,61 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, tui.NewModel(run).View().Content)
 	return 0
+}
+
+func taskItemsFromConfig(cfg config.Config) []tui.TaskItem {
+	names := make([]string, 0, len(cfg.Tasks))
+	for name := range cfg.Tasks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	items := make([]tui.TaskItem, 0, len(names))
+	for _, name := range names {
+		task := cfg.Tasks[name]
+		mode := task.Mode
+		if mode == "" {
+			mode = cfg.Defaults.Mode
+		}
+		items = append(items, tui.TaskItem{
+			Name:    name,
+			Kind:    task.Type,
+			Source:  task.From,
+			Targets: append([]string(nil), task.To...),
+			Mode:    mode,
+		})
+	}
+	return items
+}
+
+func taskActionHandler(ctx repoContext, tasks []tui.TaskItem) tui.ActionHandler {
+	return func(action tui.Action, targetIndex int) (state.Run, string, error) {
+		if targetIndex < 0 || targetIndex >= len(tasks) {
+			return state.Run{}, "", fmt.Errorf("selected task is outside task list")
+		}
+		task := tasks[targetIndex]
+		switch action {
+		case tui.ActionRunTask:
+			_, run, err := prepareAndMaybeExecute(ctx, spread.CLIInput{Task: task.Name}, false)
+			if err != nil {
+				return run, "", err
+			}
+			return run, "started task " + task.Name, nil
+		case tui.ActionPlanTask:
+			plan, _, err := prepareAndMaybeExecute(ctx, spread.CLIInput{Task: task.Name}, true)
+			if err != nil {
+				return state.Run{}, "", err
+			}
+			return state.Run{}, planText(plan), nil
+		default:
+			return state.Run{}, "", nil
+		}
+	}
+}
+
+func planText(plan spread.Plan) string {
+	var b strings.Builder
+	printPlan(&b, plan)
+	return strings.TrimSpace(b.String())
 }
 
 func tuiActionHandler(ctx repoContext) tui.ActionHandler {

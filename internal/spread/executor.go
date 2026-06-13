@@ -52,12 +52,12 @@ func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 				_ = store.Save(run)
 				return run, nil
 			}
-			run.Targets[i].Status = state.StatusFailed
+			setTargetError(&run.Targets[i], state.StatusFailed, err)
 			_ = store.Save(run)
 			return run, err
 		}
 		if err := pushTarget(plan, target, root); err != nil {
-			run.Targets[i].Status = state.StatusRejected
+			setTargetError(&run.Targets[i], state.StatusRejected, err)
 			_ = store.Save(run)
 			return run, err
 		}
@@ -117,24 +117,24 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 					_ = store.Save(run)
 					return run, nil
 				}
-				run.Targets[i].Status = state.StatusFailed
+				setTargetError(&run.Targets[i], state.StatusFailed, err)
 				_ = store.Save(run)
 				return run, err
 			}
 			if err := pushHead(plan, target, head, root); err != nil {
-				run.Targets[i].Status = state.StatusRejected
+				setTargetError(&run.Targets[i], state.StatusRejected, err)
 				_ = store.Save(run)
 				return run, err
 			}
 		} else if err := pushBranchHead(plan, head, root); err != nil {
-			run.Targets[i].Status = state.StatusRejected
+			setTargetError(&run.Targets[i], state.StatusRejected, err)
 			_ = store.Save(run)
 			return run, err
 		}
 
 		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, fmt.Sprintf("Propagate changes to %s", target.Branch))
 		if err != nil {
-			run.Targets[i].Status = state.StatusFailed
+			setTargetError(&run.Targets[i], state.StatusFailed, err)
 			_ = store.Save(run)
 			return run, err
 		}
@@ -227,6 +227,13 @@ func prHead(req Request, branch string) string {
 		return branch
 	}
 	return req.HeadOwner + ":" + branch
+}
+
+func setTargetError(target *state.Target, status state.Status, err error) {
+	target.Status = status
+	if err != nil {
+		target.Error = err.Error()
+	}
 }
 
 func conflictedFiles(r git.Runner) ([]string, error) {

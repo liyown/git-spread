@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +53,34 @@ func TestInitDryRunWritesConfigTemplate(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 	for _, want := range []string{"version: 1", "mode: direct", "tasks:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestRunWithoutArgsShowsConfiguredTasksWhenNoActiveRun(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo.Dir, ".git-spread.yml"), []byte(`
+version: 1
+tasks:
+  release:
+    type: branch
+    from: develop
+    to:
+      - main
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"Tasks", "release", "develop -> main", "direct"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}

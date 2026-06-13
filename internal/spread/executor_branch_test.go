@@ -45,3 +45,35 @@ func TestExecuteBranchDirectMergesIntoTargetWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExecuteBranchFailureRecordsError(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+
+	req := Request{
+		Kind:         KindBranch,
+		Source:       "missing-source",
+		Targets:      []string{"release/1.0"},
+		Mode:         ModeDirect,
+		Remote:       ".",
+		Workspace:    WorkspaceIsolated,
+		WorkspaceDir: ".spread",
+	}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := Execute(plan, git.NewRunner(repo.Dir), state.NewStore(filepath.Join(repo.Dir, ".git", "spread")))
+	if err == nil {
+		t.Fatal("expected merge failure")
+	}
+	if run.Targets[0].Status != state.StatusFailed {
+		t.Fatalf("status = %q, want failed", run.Targets[0].Status)
+	}
+	if run.Targets[0].Error == "" {
+		t.Fatalf("expected target error, run=%#v", run)
+	}
+}
