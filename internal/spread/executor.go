@@ -1,6 +1,7 @@
 package spread
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,11 @@ func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 		}
 
 		if err := executeTarget(plan, target, root); err != nil {
+			if workspaceActionNeeded(err) {
+				setTargetError(&run.Targets[i], state.StatusBlocked, err)
+				_ = store.Save(run)
+				return run, nil
+			}
 			conflicts, conflictErr := conflictedFiles(git.NewRunner(filepath.Join(root.Dir, target.WorkspacePath)))
 			if conflictErr == nil && len(conflicts) > 0 {
 				run.Targets[i].Status = state.StatusConflict
@@ -111,6 +117,11 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 			head = propagationBranch(plan, target)
 			run.Targets[i].CreatedBranch = head
 			if err := executePropagationBranch(plan, target, head, root); err != nil {
+				if workspaceActionNeeded(err) {
+					setTargetError(&run.Targets[i], state.StatusBlocked, err)
+					_ = store.Save(run)
+					return run, nil
+				}
 				conflicts, conflictErr := conflictedFiles(git.NewRunner(filepath.Join(root.Dir, target.WorkspacePath)))
 				if conflictErr == nil && len(conflicts) > 0 {
 					run.Targets[i].Status = state.StatusConflict
@@ -199,7 +210,7 @@ func ensureWorktree(root git.Runner, branch string, workspace string, startPoint
 		return err
 	}
 	if !clean {
-		return fmt.Errorf("isolated workspace %s has uncommitted changes; resolve them or abort before reusing it", workspace)
+		return workspaceActionError{message: fmt.Sprintf("Workspace has uncommitted changes. Open %s, commit, stash, or discard them, then press c to continue.", workspace)}
 	}
 
 	current, err := w.Output("branch", "--show-current")
@@ -210,6 +221,19 @@ func ensureWorktree(root git.Runner, branch string, workspace string, startPoint
 		return fmt.Errorf("isolated workspace %s is on branch %q, expected %q", workspace, strings.TrimSpace(current), branch)
 	}
 	return nil
+}
+
+type workspaceActionError struct {
+	message string
+}
+
+func (e workspaceActionError) Error() string {
+	return e.message
+}
+
+func workspaceActionNeeded(err error) bool {
+	var actionErr workspaceActionError
+	return errors.As(err, &actionErr)
 }
 
 func pushTarget(plan Plan, target TargetPlan, root git.Runner) error {

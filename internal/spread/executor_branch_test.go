@@ -3,6 +3,7 @@ package spread
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/liyown/git-spread/internal/git"
@@ -88,6 +89,48 @@ func TestExecuteBranchDirectReusesExistingTargetWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "release-1.0", "feature-two.txt")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecuteBranchDirectBlocksWhenExistingWorkspaceIsDirty(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+
+	workspace := filepath.Join(repo.Dir, ".spread", "main")
+	if err := git.NewRunner(repo.Dir).Run("worktree", "add", "-B", "main", workspace, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := Request{
+		Kind:         KindBranch,
+		Source:       "develop",
+		Targets:      []string{"main"},
+		Mode:         ModeDirect,
+		Remote:       ".",
+		Workspace:    WorkspaceIsolated,
+		WorkspaceDir: ".spread",
+	}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := Execute(plan, git.NewRunner(repo.Dir), state.NewStore(filepath.Join(repo.Dir, ".git", "spread")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Targets[0].Status != state.StatusBlocked {
+		t.Fatalf("status = %q, want blocked", run.Targets[0].Status)
+	}
+	if !strings.Contains(run.Targets[0].Error, "Workspace has uncommitted changes") {
+		t.Fatalf("error = %q, want workspace action message", run.Targets[0].Error)
 	}
 }
 

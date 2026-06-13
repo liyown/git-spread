@@ -27,7 +27,7 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 	}
 
 	plan := planFromRun(run)
-	if err := completeTarget(root, store, plan, &run, run.CurrentTarget, client); err != nil {
+	if err := completeCurrentTarget(root, store, plan, &run, run.CurrentTarget, client); err != nil {
 		return run, err
 	}
 	if run.Targets[run.CurrentTarget].Status != state.StatusDone {
@@ -35,31 +35,50 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 	}
 	for i := run.CurrentTarget + 1; i < len(run.Targets); i++ {
 		run.CurrentTarget = i
-		run.Targets[i].Status = state.StatusRunning
-		if err := store.Save(run); err != nil {
-			return run, err
-		}
-		if err := executeContinuingTarget(root, plan, TargetPlan{Branch: run.Targets[i].Branch, WorkspacePath: run.Targets[i].WorkspacePath}, client); err != nil {
-			conflicts, conflictErr := conflictedFiles(git.NewRunner(filepath.Join(root.Dir, run.Targets[i].WorkspacePath)))
-			if conflictErr == nil && len(conflicts) > 0 {
-				run.Targets[i].Status = state.StatusConflict
-				run.Targets[i].ConflictedFiles = conflicts
-				_ = store.Save(run)
-				return run, nil
-			}
-			setTargetError(&run.Targets[i], state.StatusFailed, err)
-			_ = store.Save(run)
-			return run, err
-		}
-		if err := finishPropagatedTarget(root, plan, &run, i, client); err != nil {
-			_ = store.Save(run)
-			return run, err
-		}
-		if err := store.Save(run); err != nil {
+		if err := retryTarget(root, store, plan, &run, i, client); err != nil {
 			return run, err
 		}
 	}
 	return run, nil
+}
+
+func completeCurrentTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {
+	if run.Targets[index].Status == state.StatusBlocked {
+		return retryTarget(root, store, plan, run, index, client)
+	}
+	return completeTarget(root, store, plan, run, index, client)
+}
+
+func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {
+	run.Targets[index].Status = state.StatusRunning
+	run.Targets[index].Error = ""
+	run.Targets[index].ConflictedFiles = nil
+	if err := store.Save(*run); err != nil {
+		return err
+	}
+
+	if err := executeContinuingTarget(root, plan, TargetPlan{Branch: run.Targets[index].Branch, WorkspacePath: run.Targets[index].WorkspacePath}, client); err != nil {
+		if workspaceActionNeeded(err) {
+			setTargetError(&run.Targets[index], state.StatusBlocked, err)
+			_ = store.Save(*run)
+			return nil
+		}
+		conflicts, conflictErr := conflictedFiles(git.NewRunner(filepath.Join(root.Dir, run.Targets[index].WorkspacePath)))
+		if conflictErr == nil && len(conflicts) > 0 {
+			run.Targets[index].Status = state.StatusConflict
+			run.Targets[index].ConflictedFiles = conflicts
+			_ = store.Save(*run)
+			return nil
+		}
+		setTargetError(&run.Targets[index], state.StatusFailed, err)
+		_ = store.Save(*run)
+		return err
+	}
+	if err := finishPropagatedTarget(root, plan, run, index, client); err != nil {
+		_ = store.Save(*run)
+		return err
+	}
+	return store.Save(*run)
 }
 
 func completeTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {

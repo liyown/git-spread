@@ -362,7 +362,7 @@ func (m Model) renderTargetDetails() string {
 		lines = append(lines, "", "Conflicts:", "  "+strings.Join(target.ConflictedFiles, ", "))
 	}
 	if target.Error != "" && targetIssueVisible(target.Status) {
-		lines = append(lines, "", "Current issue:", "  "+target.Error)
+		lines = append(lines, "", targetIssueTitle(target.Status)+":", "  "+target.Error)
 	}
 	if explanation := statusExplanation(target.Status); explanation != "" {
 		lines = append(lines, "", "Meaning:", "  "+explanation)
@@ -418,6 +418,8 @@ func statusLabel(status state.Status) string {
 		return "running"
 	case state.StatusConflict:
 		return "conflict"
+	case state.StatusBlocked:
+		return "needs action"
 	case state.StatusRejected:
 		return "push rejected"
 	case state.StatusFailed:
@@ -431,6 +433,8 @@ func statusLabel(status state.Status) string {
 
 func statusExplanation(status state.Status) string {
 	switch status {
+	case state.StatusBlocked:
+		return "Open the workspace, commit/stash/discard local changes, then press c to continue."
 	case state.StatusRejected:
 		return "The remote rejected the push. You can retry after fixing permissions/protection, or run with --mode pr."
 	case state.StatusFailed:
@@ -444,11 +448,18 @@ func statusExplanation(status state.Status) string {
 
 func targetIssueVisible(status state.Status) bool {
 	switch status {
-	case state.StatusFailed, state.StatusRejected, state.StatusConflict:
+	case state.StatusBlocked, state.StatusFailed, state.StatusRejected, state.StatusConflict:
 		return true
 	default:
 		return false
 	}
+}
+
+func targetIssueTitle(status state.Status) string {
+	if status == state.StatusBlocked {
+		return "Action needed"
+	}
+	return "Current issue"
 }
 
 func renderStatus(status state.Status) string {
@@ -460,7 +471,7 @@ func renderStatus(status state.Status) string {
 		return focusStyle.Render(label)
 	case state.StatusRejected, state.StatusFailed:
 		return errorStyle.Render(label)
-	case state.StatusConflict:
+	case state.StatusBlocked, state.StatusConflict:
 		return warnStyle.Render(label)
 	default:
 		return subtleStyle.Render(label)

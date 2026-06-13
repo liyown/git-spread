@@ -13,6 +13,7 @@ const (
 	StatusRunning  Status = "running"
 	StatusDone     Status = "done"
 	StatusConflict Status = "conflict"
+	StatusBlocked  Status = "blocked"
 	StatusRejected Status = "rejected"
 	StatusFailed   Status = "failed"
 )

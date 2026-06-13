@@ -155,6 +155,23 @@ func TestRunViewUsesReadableStatusLabels(t *testing.T) {
 	}
 }
 
+func TestRunViewShowsBlockedTargetAsActionNeeded(t *testing.T) {
+	m := NewModel(state.Run{
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusBlocked, WorkspacePath: ".spread/main", Error: "Workspace has uncommitted changes"},
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"needs action", "Action needed", "Open the workspace"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "failed") || strings.Contains(view, "Git error") {
+		t.Fatalf("blocked target should not look like a git failure:\n%s", view)
+	}
+}
+
 func TestRunViewUsesFramedTargetsDetailsActionsLayout(t *testing.T) {
 	m := NewModel(state.Run{
 		ID:     "run-1",

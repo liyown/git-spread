@@ -81,6 +81,51 @@ func TestContinueClearsStaleTargetErrorAfterSuccess(t *testing.T) {
 	}
 }
 
+func TestContinueRetriesBlockedTargetAfterWorkspaceIsClean(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+
+	workspace := filepath.Join(repo.Dir, ".spread", "main")
+	if err := git.NewRunner(repo.Dir).Run("worktree", "add", "-B", "main", workspace, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	run := state.Run{
+		ID:            "run-1",
+		Kind:          "branch",
+		Mode:          "direct",
+		Source:        "develop",
+		Remote:        ".",
+		WorkspaceDir:  ".spread",
+		CurrentTarget: 0,
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusBlocked, WorkspacePath: ".spread/main", Error: "Workspace has uncommitted changes"},
+		},
+	}
+	if err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := Continue(git.NewRunner(repo.Dir), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Targets[0].Status != state.StatusDone {
+		t.Fatalf("status = %q, want done", updated.Targets[0].Status)
+	}
+	if updated.Targets[0].Error != "" {
+		t.Fatalf("error = %q, want empty", updated.Targets[0].Error)
+	}
+	if _, err := git.NewRunner(workspace).Output("show", "HEAD:feature.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestContinueRunsRemainingTargets(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.Write("README.md", "base\n")
