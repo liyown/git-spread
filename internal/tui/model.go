@@ -232,13 +232,18 @@ func (m Model) runView() tea.View {
 		if i == m.cursor {
 			prefix = ">"
 		}
-		fmt.Fprintf(&b, "%s %s %-10s %s\n", prefix, statusMark(target.Status), target.Status, target.Branch)
+		fmt.Fprintf(&b, "%s %-14s %s\n", prefix, statusLabel(target.Status), target.Branch)
 		if target.Status == state.StatusConflict {
 			fmt.Fprintf(&b, "\nConflict summary for %s\n  Workspace: %s\n  Files:     %s\n", target.Branch, target.WorkspacePath, strings.Join(target.ConflictedFiles, ", "))
 		}
 	}
 	if m.cursor >= 0 && m.cursor < len(m.run.Targets) && m.run.Targets[m.cursor].Error != "" {
 		fmt.Fprintf(&b, "\nCurrent issue for %s\n  %s\n", m.run.Targets[m.cursor].Branch, m.run.Targets[m.cursor].Error)
+	}
+	if m.cursor >= 0 && m.cursor < len(m.run.Targets) {
+		if explanation := statusExplanation(m.run.Targets[m.cursor].Status); explanation != "" {
+			fmt.Fprintf(&b, "\nMeaning\n  %s\n", explanation)
+		}
 	}
 	m.writeMessage(&b)
 	fmt.Fprintf(&b, "\no open workspace   c continue   r refresh   p PR help   a abort   q quit\n")
@@ -274,18 +279,35 @@ func valueOrDash(value string) string {
 	return value
 }
 
-func statusMark(status state.Status) string {
+func statusLabel(status state.Status) string {
 	switch status {
 	case state.StatusDone:
-		return "OK"
+		return "done"
 	case state.StatusRunning:
-		return ".."
+		return "running"
 	case state.StatusConflict:
-		return "!!"
-	case state.StatusRejected, state.StatusFailed:
-		return "XX"
+		return "conflict"
+	case state.StatusRejected:
+		return "push rejected"
+	case state.StatusFailed:
+		return "failed"
+	case state.StatusPending:
+		return "pending"
 	default:
-		return "--"
+		return string(status)
+	}
+}
+
+func statusExplanation(status state.Status) string {
+	switch status {
+	case state.StatusRejected:
+		return "The remote rejected the push. You can retry after fixing permissions/protection, or run with --mode pr."
+	case state.StatusFailed:
+		return "Git Spread could not complete this target. See Current issue for the Git error."
+	case state.StatusConflict:
+		return "Resolve conflicts in the workspace, then press c or run git-spread continue."
+	default:
+		return ""
 	}
 }
 

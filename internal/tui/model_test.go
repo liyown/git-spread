@@ -112,6 +112,23 @@ func TestViewShowsSelectedTargetError(t *testing.T) {
 	}
 }
 
+func TestRunViewUsesReadableStatusLabels(t *testing.T) {
+	m := NewModel(state.Run{
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusRejected, Error: "push rejected"},
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"push rejected", "remote rejected the push"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "XX") || strings.Contains(view, "OK") {
+		t.Fatalf("view should not use symbolic status codes:\n%s", view)
+	}
+}
+
 func TestKeyBindingsSetActions(t *testing.T) {
 	cases := []struct {
 		key  string
