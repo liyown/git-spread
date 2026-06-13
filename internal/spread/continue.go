@@ -10,14 +10,22 @@ import (
 )
 
 func Continue(root git.Runner, store state.Store) (state.Run, error) {
-	return continueRun(root, store, nil)
+	return ContinueWithProgress(root, store, nil)
+}
+
+func ContinueWithProgress(root git.Runner, store state.Store, progress ProgressReporter) (state.Run, error) {
+	return continueRun(root, store, nil, progress)
 }
 
 func ContinueWithGitHub(root git.Runner, store state.Store, client gh.Client) (state.Run, error) {
-	return continueRun(root, store, client)
+	return ContinueWithGitHubProgress(root, store, client, nil)
 }
 
-func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Run, error) {
+func ContinueWithGitHubProgress(root git.Runner, store state.Store, client gh.Client, progress ProgressReporter) (state.Run, error) {
+	return continueRun(root, store, client, progress)
+}
+
+func continueRun(root git.Runner, store state.Store, client gh.Client, progress ProgressReporter) (state.Run, error) {
 	run, err := store.Load()
 	if err != nil {
 		return state.Run{}, err
@@ -27,7 +35,7 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 	}
 
 	plan := planFromRun(run)
-	if err := completeCurrentTarget(root, store, plan, &run, run.CurrentTarget, client); err != nil {
+	if err := completeCurrentTarget(root, store, plan, &run, run.CurrentTarget, client, progress); err != nil {
 		return run, err
 	}
 	if run.Targets[run.CurrentTarget].Status != state.StatusDone {
@@ -35,7 +43,7 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 	}
 	for i := run.CurrentTarget + 1; i < len(run.Targets); i++ {
 		run.CurrentTarget = i
-		if err := retryTarget(root, store, plan, &run, i, client); err != nil {
+		if err := retryTarget(root, store, plan, &run, i, client, progress); err != nil {
 			return run, err
 		}
 	}
@@ -45,14 +53,14 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 	return run, nil
 }
 
-func completeCurrentTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {
+func completeCurrentTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client, progress ProgressReporter) error {
 	if run.Targets[index].Status == state.StatusBlocked {
-		return retryTarget(root, store, plan, run, index, client)
+		return retryTarget(root, store, plan, run, index, client, progress)
 	}
-	return completeTarget(root, store, plan, run, index, client)
+	return completeTarget(root, store, plan, run, index, client, progress)
 }
 
-func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {
+func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client, progress ProgressReporter) error {
 	run.Targets[index].Status = state.StatusRunning
 	run.Targets[index].Error = ""
 	run.Targets[index].ConflictedFiles = nil
@@ -60,7 +68,10 @@ func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, 
 		return err
 	}
 
-	if err := executeContinuingTarget(root, plan, TargetPlan{Branch: run.Targets[index].Branch, WorkspacePath: run.Targets[index].WorkspacePath}, client); err != nil {
+	report := func(step string) error {
+		return setTargetStep(store, run, index, step, progress)
+	}
+	if err := executeContinuingTarget(root, plan, TargetPlan{Branch: run.Targets[index].Branch, WorkspacePath: run.Targets[index].WorkspacePath}, client, report); err != nil {
 		if workspaceActionNeeded(err) {
 			setTargetError(&run.Targets[index], state.StatusBlocked, err)
 			_ = store.Save(*run)
@@ -77,14 +88,14 @@ func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, 
 		_ = store.Save(*run)
 		return err
 	}
-	if err := finishPropagatedTarget(root, plan, run, index, client); err != nil {
+	if err := finishPropagatedTarget(root, store, plan, run, index, client, progress); err != nil {
 		_ = store.Save(*run)
 		return err
 	}
 	return store.Save(*run)
 }
 
-func completeTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client) error {
+func completeTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client, progress ProgressReporter) error {
 	target := &run.Targets[index]
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
 	w := git.NewRunner(workspace)
@@ -103,33 +114,41 @@ func completeTarget(root git.Runner, store state.Store, plan Plan, run *state.Ru
 		return err
 	}
 	if !clean {
+		if err := setTargetStep(store, run, index, "finish merge or cherry-pick", progress); err != nil {
+			return err
+		}
 		if err := finishInProgressOperation(w); err != nil {
 			return err
 		}
 	}
 
-	if err := finishPropagatedTarget(root, plan, run, index, client); err != nil {
+	if err := finishPropagatedTarget(root, store, plan, run, index, client, progress); err != nil {
 		_ = store.Save(*run)
 		return err
 	}
 	return store.Save(*run)
 }
 
-func executeContinuingTarget(root git.Runner, plan Plan, target TargetPlan, client gh.Client) error {
+func executeContinuingTarget(root git.Runner, plan Plan, target TargetPlan, client gh.Client, report stepReporter) error {
 	if plan.Request.Mode == ModePR {
 		if plan.Request.Kind == KindBranch {
 			return nil
 		}
 		head := propagationBranch(plan, target)
-		return executePropagationBranch(plan, target, head, root)
+		return executePropagationBranch(plan, target, head, root, report)
 	}
-	return executeTarget(plan, target, root)
+	return executeTarget(plan, target, root, report)
 }
 
-func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index int, client gh.Client) error {
+func finishPropagatedTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client, progress ProgressReporter) error {
 	target := TargetPlan{Branch: run.Targets[index].Branch, WorkspacePath: run.Targets[index].WorkspacePath}
 	switch plan.Request.Mode {
 	case ModeDirect:
+		if shouldPush(plan.Request) {
+			if err := setTargetStep(store, run, index, "push "+target.Branch, progress); err != nil {
+				return err
+			}
+		}
 		if err := pushTarget(plan, target, root); err != nil {
 			setTargetError(&run.Targets[index], state.StatusRejected, err)
 			return err
@@ -143,6 +162,11 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 			head = plan.Request.Source
 		}
 		if plan.Request.Kind == KindBranch {
+			if shouldPushHead(plan.Request) {
+				if err := setTargetStep(store, run, index, "push "+head, progress); err != nil {
+					return err
+				}
+			}
 			if err := pushBranchHead(plan, head, root); err != nil {
 				setTargetError(&run.Targets[index], state.StatusRejected, err)
 				return err
@@ -152,10 +176,18 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 				head = propagationBranch(plan, target)
 			}
 			run.Targets[index].CreatedBranch = head
+			if shouldPushHead(plan.Request) {
+				if err := setTargetStep(store, run, index, "push "+head, progress); err != nil {
+					return err
+				}
+			}
 			if err := pushHead(plan, target, head, root); err != nil {
 				setTargetError(&run.Targets[index], state.StatusRejected, err)
 				return err
 			}
+		}
+		if err := setTargetStep(store, run, index, "create pull request", progress); err != nil {
+			return err
 		}
 		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, "Propagate changes to "+target.Branch)
 		if err != nil {

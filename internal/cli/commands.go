@@ -242,6 +242,10 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 var errInvalidInput = errors.New("invalid input")
 
 func prepareAndMaybeExecute(ctx repoContext, input spread.CLIInput, planOnly bool) (spread.Plan, state.Run, error) {
+	return prepareAndMaybeExecuteWithProgress(ctx, input, planOnly, nil)
+}
+
+func prepareAndMaybeExecuteWithProgress(ctx repoContext, input spread.CLIInput, planOnly bool, progress spread.ProgressReporter) (spread.Plan, state.Run, error) {
 	input.Config = ctx.config
 	input.CurrentBranch = ctx.currentBranch
 
@@ -263,7 +267,7 @@ func prepareAndMaybeExecute(ctx repoContext, input spread.CLIInput, planOnly boo
 	if planOnly {
 		return plan, state.Run{}, nil
 	}
-	run, err := executePlan(plan, ctx.git, ctx.store, client)
+	run, err := executePlan(plan, ctx.git, ctx.store, client, progress)
 	if err != nil {
 		return plan, run, err
 	}
@@ -284,11 +288,11 @@ func buildPlan(req spread.Request, runner git.Runner, client ghclient.Client) (s
 	return spread.BuildPlan(req, runner)
 }
 
-func executePlan(plan spread.Plan, runner git.Runner, store state.Store, client ghclient.Client) (state.Run, error) {
+func executePlan(plan spread.Plan, runner git.Runner, store state.Store, client ghclient.Client, progress spread.ProgressReporter) (state.Run, error) {
 	if plan.Request.Mode == spread.ModePR {
-		return spread.ExecuteWithGitHub(plan, runner, store, client)
+		return spread.ExecuteWithGitHubProgress(plan, runner, store, client, progress)
 	}
-	return spread.Execute(plan, runner, store)
+	return spread.ExecuteWithProgress(plan, runner, store, progress)
 }
 
 func prepareGitHub(req *spread.Request, ctx repoContext) (ghclient.Client, error) {
@@ -461,14 +465,14 @@ func taskItemsFromConfig(cfg config.Config) []tui.TaskItem {
 }
 
 func taskActionHandler(ctx repoContext, tasks []tui.TaskItem) tui.ActionHandler {
-	return func(action tui.Action, targetIndex int) (state.Run, string, error) {
+	return func(action tui.Action, targetIndex int, progress tui.ProgressReporter) (state.Run, string, error) {
 		if targetIndex < 0 || targetIndex >= len(tasks) {
 			return state.Run{}, "", fmt.Errorf("selected task is outside task list")
 		}
 		task := tasks[targetIndex]
 		switch action {
 		case tui.ActionRunTask:
-			_, run, err := prepareAndMaybeExecute(ctx, spread.CLIInput{Task: task.Name}, false)
+			_, run, err := prepareAndMaybeExecuteWithProgress(ctx, spread.CLIInput{Task: task.Name}, false, progress)
 			if err != nil {
 				return run, "", err
 			}
@@ -492,7 +496,7 @@ func planText(plan spread.Plan) string {
 }
 
 func tuiActionHandler(ctx repoContext) tui.ActionHandler {
-	return func(action tui.Action, targetIndex int) (state.Run, string, error) {
+	return func(action tui.Action, targetIndex int, progress tui.ProgressReporter) (state.Run, string, error) {
 		switch action {
 		case tui.ActionRefresh:
 			run, err := ctx.store.Load()
@@ -510,7 +514,7 @@ func tuiActionHandler(ctx repoContext) tui.ActionHandler {
 			}
 			return run, "opened workspace in editor", nil
 		case tui.ActionContinue:
-			run, err := continueActiveRun(ctx)
+			run, err := continueActiveRunWithProgress(ctx, progress)
 			return run, "continued run", err
 		case tui.ActionAbort:
 			run, err := ctx.store.Load()
@@ -531,11 +535,48 @@ func tuiActionHandler(ctx repoContext) tui.ActionHandler {
 			return state.Run{}, "Reset Git Spread state. Press q to quit or restart git-spread.", nil
 		case tui.ActionSwitchToPR:
 			run, err := ctx.store.Load()
-			return run, "switch to PR mode from TUI is not wired yet; run the command again with --mode pr", err
+			if err != nil {
+				return run, "", err
+			}
+			return run, prModeHint(run, targetIndex), nil
 		default:
 			run, err := ctx.store.Load()
 			return run, "", err
 		}
+	}
+}
+
+func prModeHint(run state.Run, targetIndex int) string {
+	targets := run.Targets
+	target := ""
+	if targetIndex >= 0 && targetIndex < len(targets) {
+		target = targets[targetIndex].Branch
+	}
+	if target == "" {
+		target = "<target>"
+	}
+	switch run.Kind {
+	case string(spread.KindBranch):
+		if run.Source == "" {
+			return "PR mode: run git spread branch --to " + target + " --mode pr"
+		}
+		return "PR mode: run git spread branch " + run.Source + " --to " + target + " --mode pr"
+	case string(spread.KindCommit):
+		items := run.Items
+		if len(items) == 0 {
+			items = run.Commits
+		}
+		if len(items) == 0 {
+			return "PR mode: rerun this commit propagation with --mode pr"
+		}
+		return "PR mode: run git spread commit " + strings.Join(items, " ") + " --to " + target + " --mode pr"
+	case string(spread.KindPR):
+		if len(run.Items) == 0 {
+			return "PR mode: rerun this PR propagation with --mode pr"
+		}
+		return "PR mode: run git spread pr " + run.Items[0] + " --to " + target + " --mode pr"
+	default:
+		return "PR mode: rerun this propagation with --mode pr"
 	}
 }
 
@@ -590,6 +631,10 @@ func continueRun(stdout io.Writer, stderr io.Writer) int {
 }
 
 func continueActiveRun(ctx repoContext) (state.Run, error) {
+	return continueActiveRunWithProgress(ctx, nil)
+}
+
+func continueActiveRunWithProgress(ctx repoContext, progress spread.ProgressReporter) (state.Run, error) {
 	active, err := ctx.store.Load()
 	if err != nil {
 		return state.Run{}, err
@@ -601,9 +646,9 @@ func continueActiveRun(ctx repoContext) (state.Run, error) {
 		if err != nil {
 			return state.Run{}, err
 		}
-		run, err = spread.ContinueWithGitHub(ctx.git, ctx.store, client)
+		run, err = spread.ContinueWithGitHubProgress(ctx.git, ctx.store, client, progress)
 	} else {
-		run, err = spread.Continue(ctx.git, ctx.store)
+		run, err = spread.ContinueWithProgress(ctx.git, ctx.store, progress)
 	}
 	return run, err
 }

@@ -62,4 +62,7 @@ func TestExecuteCommitConflictPausesRun(t *testing.T) {
 	if len(run.Targets[0].ConflictedFiles) != 1 || run.Targets[0].ConflictedFiles[0] != "app.txt" {
 		t.Fatalf("conflicted files = %#v", run.Targets[0].ConflictedFiles)
 	}
+	if run.Targets[0].Step != "cherry-pick commits" {
+		t.Fatalf("step = %q, want cherry-pick step", run.Targets[0].Step)
+	}
 }

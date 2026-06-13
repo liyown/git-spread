@@ -54,7 +54,11 @@ const (
 	ActionPlanTask      Action = "plan-task"
 )
 
-type ActionHandler func(Action, int) (state.Run, string, error)
+type ProgressReporter interface {
+	Report(state.Run, string)
+}
+
+type ActionHandler func(Action, int, ProgressReporter) (state.Run, string, error)
 
 type Screen string
 
@@ -79,6 +83,7 @@ type Model struct {
 	message    string
 	processing bool
 	handler    ActionHandler
+	progress   <-chan tea.Msg
 	LastAction Action
 }
 
@@ -121,6 +126,11 @@ type actionResultMsg struct {
 	run     state.Run
 	message string
 	err     error
+}
+
+type progressEventMsg struct {
+	run     state.Run
+	message string
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -178,6 +188,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case actionResultMsg:
 		m.processing = false
+		m.progress = nil
 		if msg.err != nil {
 			m.message = msg.err.Error()
 			return m, nil
@@ -188,29 +199,111 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
 		}
 		m.message = msg.message
+	case progressEventMsg:
+		if !m.processing {
+			return m, nil
+		}
+		if len(msg.run.Targets) > 0 {
+			m.run = msg.run
+			m.screen = ScreenRun
+			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
+			if msg.message != "" {
+				m.message = msg.message
+			} else if step := currentStepMessage(m.run); step != "" {
+				m.message = step
+			}
+		}
+		return m, m.waitForProgress()
+	case progressDoneMsg:
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m Model) startAction(action Action) (tea.Model, tea.Cmd) {
 	m.processing = true
-	if m.screen == ScreenTasks && action == ActionRunTask {
-		m.message = "Starting task..."
-	} else {
-		m.message = "Working..."
+	m.message = workingMessage(action)
+	progress := make(chan tea.Msg, 32)
+	m.progress = progress
+	actionCmd := m.runAction(action, progress)
+	if actionCmd == nil {
+		return m, nil
 	}
-	return m, m.runAction(action)
+	return m, tea.Batch(actionCmd, m.waitForProgress())
 }
 
-func (m Model) runAction(action Action) tea.Cmd {
+func workingMessage(action Action) string {
+	switch action {
+	case ActionRunTask:
+		return "Starting selected task..."
+	case ActionPlanTask:
+		return "Rendering execution plan..."
+	case ActionOpenWorkspace:
+		return "Opening workspace in editor..."
+	case ActionRefresh:
+		return "Refreshing run state..."
+	case ActionContinue:
+		return "Continuing active run..."
+	case ActionSwitchToPR:
+		return "Preparing PR mode guidance..."
+	case ActionAbort:
+		return "Aborting active run..."
+	case ActionReset:
+		return "Resetting local state..."
+	default:
+		return "Working..."
+	}
+}
+
+func (m Model) runAction(action Action, progress chan tea.Msg) tea.Cmd {
 	if m.handler == nil {
 		return nil
 	}
 	cursor := m.cursor
 	return func() tea.Msg {
-		run, message, err := m.handler(action, cursor)
+		defer close(progress)
+		run, message, err := m.handler(action, cursor, progressReporter{ch: progress})
 		return actionResultMsg{run: run, message: message, err: err}
 	}
+}
+
+type progressDoneMsg struct{}
+
+type progressReporter struct {
+	ch chan<- tea.Msg
+}
+
+func (r progressReporter) Report(run state.Run, message string) {
+	if r.ch == nil {
+		return
+	}
+	r.ch <- progressEventMsg{run: run, message: message}
+}
+
+func (m Model) waitForProgress() tea.Cmd {
+	if m.progress == nil {
+		return nil
+	}
+	progress := m.progress
+	return func() tea.Msg {
+		msg, ok := <-progress
+		if !ok {
+			return progressDoneMsg{}
+		}
+		return msg
+	}
+}
+
+func currentStepMessage(run state.Run) string {
+	index := initialTargetCursor(run)
+	if index < 0 || index >= len(run.Targets) {
+		return ""
+	}
+	target := run.Targets[index]
+	if target.Step == "" {
+		return ""
+	}
+	return target.Branch + ": " + target.Step
 }
 
 func (m Model) itemCount() int {
@@ -250,16 +343,16 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) taskView() tea.View {
-	header := titleStyle.Render("Git Spread - Tasks") + "  " + subtleStyle.Render("choose a configured propagation")
-	tasks := m.renderTaskList()
-	preview := m.renderTaskPreview()
+	header := titleStyle.Render("Git Spread Control Console") + "  " + subtleStyle.Render("choose a configured propagation")
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		"",
+		panel("Task overview", m.renderTaskOverview(), innerWidth),
+		"",
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			panel("Tasks", tasks, leftWidth),
+			panel("Tasks", m.renderTaskList(), leftWidth),
 			"  ",
-			panel("Preview", preview, rightWidth),
+			panel("Preview", m.renderTaskPreview(), rightWidth),
 		),
 	)
 	if m.message != "" {
@@ -269,10 +362,17 @@ func (m Model) taskView() tea.View {
 	return altView(frameStyle.Width(surfaceWidth).Render(body))
 }
 
+func (m Model) renderTaskOverview() string {
+	if len(m.tasks) == 0 {
+		return "Tasks: 0\nRun git spread init to create .git-spread.yml."
+	}
+	return fmt.Sprintf("Tasks: %d\nSelect a configured propagation, preview it with p, or press Enter to run.", len(m.tasks))
+}
+
 func (m Model) renderTaskList() string {
 	var b strings.Builder
 	if len(m.tasks) == 0 {
-		return subtleStyle.Render("no tasks configured")
+		return subtleStyle.Render("No tasks configured")
 	}
 	for i, task := range m.tasks {
 		prefix := " "
@@ -281,7 +381,7 @@ func (m Model) renderTaskList() string {
 			prefix = ">"
 			lineStyle = focusStyle
 		}
-		fmt.Fprintf(&b, "%s %-14s %-7s %s\n", prefix, task.Name, task.Kind, task.Mode)
+		fmt.Fprintf(&b, "%s %-12s %-7s %-6s %s\n", prefix, task.Name, valueOrDash(task.Kind), valueOrDash(task.Mode), taskFlow(task))
 		if i == m.cursor {
 			lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
 			lines[len(lines)-1] = lineStyle.Render(lines[len(lines)-1])
@@ -295,24 +395,27 @@ func (m Model) renderTaskList() string {
 
 func (m Model) renderTaskPreview() string {
 	if len(m.tasks) == 0 {
-		return subtleStyle.Render("Create .git-spread.yml tasks to use this view.")
+		return subtleStyle.Render("No configured propagations.\nRun git spread init to create .git-spread.yml.\nCreate .git-spread.yml with tasks for repeated flows.")
 	}
 	task := m.tasks[clampCursor(m.cursor, len(m.tasks))]
 	lines := []string{
-		"Name:   " + task.Name,
-		"Type:   " + valueOrDash(task.Kind),
-		"Mode:   " + valueOrDash(task.Mode),
+		"Next run:",
+		"  git spread run " + task.Name,
+		"",
+		"Name:    " + task.Name,
+		"Type:    " + valueOrDash(task.Kind),
+		"Mode:    " + valueOrDash(task.Mode),
 	}
-	lines = append(lines, "Flow:   "+taskFlow(task))
+	lines = append(lines, "Flow:    "+taskFlow(task))
 	if task.Source != "" {
-		lines = append(lines, "From:   "+task.Source)
+		lines = append(lines, "Source:  "+task.Source)
 	}
-	lines = append(lines, "To:     "+strings.Join(task.Targets, ", "))
+	lines = append(lines, "Targets: "+strings.Join(task.Targets, ", "))
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) runView() tea.View {
-	headerParts := []string{titleStyle.Render("Git Spread")}
+	headerParts := []string{titleStyle.Render("Git Spread Control Console")}
 	if m.run.ID != "" {
 		headerParts = append(headerParts, subtleStyle.Render("run "+m.run.ID))
 	}
@@ -320,10 +423,12 @@ func (m Model) runView() tea.View {
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		strings.Join(headerParts, "  "),
 		"",
+		panel("Run overview", m.renderRunOverview(), innerWidth),
+		"",
 		lipgloss.JoinHorizontal(lipgloss.Top,
 			panel("Targets", m.renderTargetList(), leftWidth),
 			"  ",
-			panel("Details", m.renderTargetDetails(), rightWidth),
+			panel("Target details", m.renderTargetDetails(), rightWidth),
 		),
 	)
 	if m.message != "" {
@@ -331,6 +436,64 @@ func (m Model) runView() tea.View {
 	}
 	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   x reset   q quit", innerWidth))
 	return altView(frameStyle.Width(surfaceWidth).Render(body))
+}
+
+func (m Model) renderRunOverview() string {
+	total := len(m.run.Targets)
+	if total == 0 {
+		return "Progress: no active targets\nStatus: no active run"
+	}
+	stats := countStatuses(m.run.Targets)
+	done := stats[state.StatusDone]
+	percent := done * 100 / total
+	lines := []string{
+		fmt.Sprintf("Progress: %s %d/%d complete (%d%%)", progressBar(done, total, 18), done, total, percent),
+		"Status: " + statusSummary(stats),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func countStatuses(targets []state.Target) map[state.Status]int {
+	stats := map[state.Status]int{}
+	for _, target := range targets {
+		stats[target.Status]++
+	}
+	return stats
+}
+
+func statusSummary(stats map[state.Status]int) string {
+	ordered := []state.Status{
+		state.StatusDone,
+		state.StatusRunning,
+		state.StatusConflict,
+		state.StatusBlocked,
+		state.StatusRejected,
+		state.StatusFailed,
+		state.StatusPending,
+	}
+	parts := make([]string, 0, len(ordered))
+	for _, status := range ordered {
+		count := stats[status]
+		if count == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s %d", statusLabel(status), count))
+	}
+	if len(parts) == 0 {
+		return "no active targets"
+	}
+	return strings.Join(parts, "  ")
+}
+
+func progressBar(done int, total int, width int) string {
+	if total <= 0 {
+		return "[" + strings.Repeat("-", width) + "]"
+	}
+	filled := done * width / total
+	if filled > width {
+		filled = width
+	}
+	return "[" + strings.Repeat("=", filled) + strings.Repeat("-", width-filled) + "]"
 }
 
 func (m Model) renderTargetList() string {
@@ -344,7 +507,11 @@ func (m Model) renderTargetList() string {
 			prefix = ">"
 		}
 		status := renderStatus(target.Status)
-		line := fmt.Sprintf("%s %-18s %s", prefix, status, target.Branch)
+		branch := target.Branch
+		if target.Step != "" && target.Status == state.StatusRunning {
+			branch += "  " + target.Step
+		}
+		line := fmt.Sprintf("%s %-18s %s", prefix, status, branch)
 		if i == m.cursor {
 			line = focusStyle.Render(line)
 		}
@@ -355,24 +522,30 @@ func (m Model) renderTargetList() string {
 
 func (m Model) renderTargetDetails() string {
 	if len(m.run.Targets) == 0 {
-		return subtleStyle.Render("No active target.")
+		return subtleStyle.Render("No active target.\n\nNext action:\n  Start a run from the task screen or CLI.")
 	}
 	target := m.run.Targets[clampCursor(m.cursor, len(m.run.Targets))]
 	lines := []string{
 		"Target: " + target.Branch,
 		"Status: " + statusLabel(target.Status),
+		"",
+		"Next action:",
+		"  " + nextAction(target),
 	}
 	if target.WorkspacePath != "" {
 		lines = append(lines, "", "Workspace:", "  "+target.WorkspacePath)
 	}
+	if target.Step != "" && target.Status != state.StatusDone {
+		lines = append(lines, "", "Current step:", "  "+target.Step)
+	}
 	if len(target.ConflictedFiles) > 0 {
 		lines = append(lines, "", "Conflicts:", "  "+strings.Join(target.ConflictedFiles, ", "))
 	}
-	if target.Error != "" && targetIssueVisible(target.Status) {
-		lines = append(lines, "", targetIssueTitle(target.Status)+":", "  "+target.Error)
+	if target.PullRequestURL != "" {
+		lines = append(lines, "", "Pull request:", "  "+target.PullRequestURL)
 	}
-	if explanation := statusExplanation(target.Status); explanation != "" {
-		lines = append(lines, "", "Meaning:", "  "+explanation)
+	if targetIssueVisible(target.Status) {
+		lines = append(lines, "", targetIssueTitle(target.Status)+":", "  "+targetIssue(target))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -386,17 +559,6 @@ func (m Model) writeMessage(b *strings.Builder) {
 		prefix = "Working"
 	}
 	fmt.Fprintf(b, "\n%s: %s\n", prefix, m.message)
-}
-
-func taskSummary(task TaskItem) string {
-	targets := strings.Join(task.Targets, ", ")
-	if targets == "" {
-		targets = "-"
-	}
-	if task.Source != "" {
-		return task.Source + " -> " + targets + " (" + valueOrDash(task.Mode) + ")"
-	}
-	return "-> " + targets + " (" + valueOrDash(task.Mode) + ")"
 }
 
 func taskFlow(task TaskItem) string {
@@ -438,18 +600,27 @@ func statusLabel(status state.Status) string {
 	}
 }
 
-func statusExplanation(status state.Status) string {
-	switch status {
+func nextAction(target state.Target) string {
+	switch target.Status {
+	case state.StatusDone:
+		return "No action needed."
+	case state.StatusRunning:
+		if target.Step != "" {
+			return "Wait for " + target.Step + " to finish."
+		}
+		return "Wait for the current Git operation to finish."
+	case state.StatusPending:
+		return "Waiting for earlier targets."
 	case state.StatusBlocked:
-		return "Open the workspace, commit/stash/discard local changes, then press c to continue."
+		return "Open workspace, commit/stash/discard local changes, then press c to continue."
 	case state.StatusRejected:
-		return "The remote rejected the push. You can retry after fixing permissions/protection, or run with --mode pr."
+		return "rerun this propagation with --mode pr after fixing push access."
 	case state.StatusFailed:
-		return "Git Spread could not complete this target. See Current issue for the Git error."
+		return "Read the error, fix the workspace or abort this run."
 	case state.StatusConflict:
-		return "Resolve conflicts in the workspace, then press c or run git-spread continue."
+		return "Open workspace, resolve conflicts in your editor, then press c to continue."
 	default:
-		return ""
+		return "Inspect this target before continuing."
 	}
 }
 
@@ -463,10 +634,36 @@ func targetIssueVisible(status state.Status) bool {
 }
 
 func targetIssueTitle(status state.Status) string {
-	if status == state.StatusBlocked {
+	switch status {
+	case state.StatusBlocked:
 		return "Action needed"
+	case state.StatusRejected:
+		return "Push rejected"
+	case state.StatusFailed:
+		return "Failure"
+	case state.StatusConflict:
+		return "Why paused"
+	default:
+		return "Details"
 	}
-	return "Current issue"
+}
+
+func targetIssue(target state.Target) string {
+	if target.Error != "" {
+		return target.Error
+	}
+	switch target.Status {
+	case state.StatusConflict:
+		return "Conflicts remain in the workspace."
+	case state.StatusRejected:
+		return "The remote rejected the push."
+	case state.StatusBlocked:
+		return "The workspace needs local cleanup."
+	case state.StatusFailed:
+		return "Git Spread could not complete this target."
+	default:
+		return "-"
+	}
 }
 
 func renderStatus(status state.Status) string {

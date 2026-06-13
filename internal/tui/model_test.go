@@ -8,12 +8,32 @@ import (
 	"github.com/liyown/git-spread/internal/state"
 )
 
+func updateWithActionResult(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			msg = batched()
+			if _, ok := msg.(actionResultMsg); ok {
+				updated, _ := m.Update(msg)
+				return updated.(Model)
+			}
+		}
+		t.Fatalf("batch did not contain action result: %#v", batch)
+	}
+	updated, _ := m.Update(msg)
+	return updated.(Model)
+}
+
 func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
 	called := false
 	m := NewTaskModelWithHandler([]TaskItem{
 		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
 		{Name: "backport", Kind: "commit", Targets: []string{"release/*"}, Mode: "pr"},
-	}, func(action Action, targetIndex int) (state.Run, string, error) {
+	}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		called = true
 		if action != ActionRunTask {
 			t.Fatalf("action = %q, want run task", action)
@@ -24,7 +44,7 @@ func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
 		return state.Run{ID: "run-1", Source: "develop", Mode: "direct", Targets: []state.Target{{Branch: "release/1.0", Status: state.StatusRunning}}}, "started backport", nil
 	})
 	view := m.View().Content
-	for _, want := range []string{"Tasks", "release", "backport", "Enter run", "p plan"} {
+	for _, want := range []string{"Git Spread Control Console", "Tasks", "release", "backport", "develop -> release/*, main", "Enter run", "p plan"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -35,8 +55,7 @@ func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected task run command")
 	}
-	updated, _ = updated.(Model).Update(cmd())
-	model := updated.(Model)
+	model := updateWithActionResult(t, updated.(Model), cmd)
 	if !called {
 		t.Fatal("expected task handler to be called")
 	}
@@ -50,7 +69,17 @@ func TestTaskViewUsesFramedLayout(t *testing.T) {
 		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
 	})
 	view := m.View().Content
-	for _, want := range []string{"┌", "┐", "└", "┘", "Git Spread - Tasks", "Preview", "Actions"} {
+	for _, want := range []string{"┌", "┐", "└", "┘", "Git Spread Control Console", "Preview", "Actions"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestTaskViewShowsEmptyStateWithInitHint(t *testing.T) {
+	m := NewTaskModel(nil)
+	view := m.View().Content
+	for _, want := range []string{"No tasks configured", "git spread init", "Create .git-spread.yml"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -58,7 +87,7 @@ func TestTaskViewUsesFramedLayout(t *testing.T) {
 }
 
 func TestTaskListPlanShowsPlanMessage(t *testing.T) {
-	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"main"}, Mode: "direct"}}, func(action Action, targetIndex int) (state.Run, string, error) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"main"}, Mode: "direct"}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		if action != ActionPlanTask {
 			t.Fatalf("action = %q, want plan task", action)
 		}
@@ -69,14 +98,14 @@ func TestTaskListPlanShowsPlanMessage(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected plan command")
 	}
-	updated, _ = updated.(Model).Update(cmd())
-	if !strings.Contains(updated.(Model).View().Content, "Plan") {
-		t.Fatalf("view missing plan message:\n%s", updated.(Model).View().Content)
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	if !strings.Contains(model.View().Content, "Plan") {
+		t.Fatalf("view missing plan message:\n%s", model.View().Content)
 	}
 }
 
 func TestTaskRunShowsProcessingMessageBeforeCommandCompletes(t *testing.T) {
-	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int) (state.Run, string, error) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		return state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusRunning}}}, "started", nil
 	})
 
@@ -85,7 +114,7 @@ func TestTaskRunShowsProcessingMessageBeforeCommandCompletes(t *testing.T) {
 		t.Fatal("expected run command")
 	}
 	view := updated.(Model).View().Content
-	if !strings.Contains(view, "Working: Starting task") {
+	if !strings.Contains(view, "Working: Starting selected task") {
 		t.Fatalf("view missing processing message:\n%s", view)
 	}
 }
@@ -101,14 +130,14 @@ func TestViewShowsConflictWorkspace(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"release/1.1", ".spread/release-1.1", "user.go", "open workspace"} {
+	for _, want := range []string{"release/1.1", ".spread/release-1.1", "user.go", "Next action", "Open workspace, resolve conflicts"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
 	}
 }
 
-func TestViewShowsSelectedTargetError(t *testing.T) {
+func TestViewShowsFailedTargetActionAndFailure(t *testing.T) {
 	m := NewModel(state.Run{
 		ID:   "run-1",
 		Mode: "direct",
@@ -117,10 +146,13 @@ func TestViewShowsSelectedTargetError(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"Current issue", "merge failed"} {
+	for _, want := range []string{"Next action", "Read the error", "Failure", "merge failed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "Current issue") {
+		t.Fatalf("view should not use vague issue title:\n%s", view)
 	}
 }
 
@@ -133,7 +165,7 @@ func TestViewHidesStaleErrorForDoneTarget(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	if strings.Contains(view, "Current issue") || strings.Contains(view, "old worktree failure") {
+	if strings.Contains(view, "Current issue") || strings.Contains(view, "Failure") || strings.Contains(view, "old worktree failure") {
 		t.Fatalf("done target should not show stale error:\n%s", view)
 	}
 }
@@ -145,7 +177,7 @@ func TestRunViewUsesReadableStatusLabels(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"push rejected", "remote rejected the push"} {
+	for _, want := range []string{"push rejected", "Push rejected", "rerun this propagation with --mode pr"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -162,7 +194,7 @@ func TestRunViewShowsBlockedTargetAsActionNeeded(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"needs action", "Action needed", "Open the workspace"} {
+	for _, want := range []string{"needs action", "Action needed", "Open workspace, commit/stash/discard"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -182,10 +214,134 @@ func TestRunViewUsesFramedTargetsDetailsActionsLayout(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"┌", "┐", "└", "┘", "Targets", "Details", "Actions", "Target: main", "Status: push rejected"} {
+	for _, want := range []string{"┌", "┐", "└", "┘", "Run overview", "Targets", "Target details", "Actions", "Target: main", "Status: push rejected"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestRunViewShowsProgressAndStatusSummary(t *testing.T) {
+	m := NewModel(state.Run{
+		ID:     "run-1",
+		Source: "develop",
+		Mode:   "direct",
+		Targets: []state.Target{
+			{Branch: "release/1.0", Status: state.StatusDone},
+			{Branch: "release/1.1", Status: state.StatusRunning},
+			{Branch: "release/1.2", Status: state.StatusConflict},
+			{Branch: "main", Status: state.StatusPending},
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"Progress", "1/4 complete", "25%", "done 1", "running 1", "conflict 1", "pending 1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRunViewShowsCurrentStepForRunningTarget(t *testing.T) {
+	m := NewModel(state.Run{
+		ID:     "run-1",
+		Source: "develop",
+		Mode:   "direct",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusRunning, Step: "merge develop", WorkspacePath: ".spread/main"},
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"Current step", "merge develop"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestActionStartsProgressEventSubscription(t *testing.T) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		return state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusRunning}}}, "started", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	model := updated.(Model)
+	if model.progress == nil {
+		t.Fatal("expected action to create a progress event channel")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok || len(batch) < 2 {
+		t.Fatalf("expected batched action and progress event command, got %#v", msg)
+	}
+}
+
+func TestProgressEventKeepsProcessingAndUpdatesCurrentStep(t *testing.T) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		return state.Run{}, "", nil
+	})
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model := updated.(Model)
+
+	updated, cmd := model.Update(progressEventMsg{
+		run: state.Run{
+			ID:     "run-1",
+			Source: "develop",
+			Mode:   "direct",
+			Targets: []state.Target{
+				{Branch: "main", Status: state.StatusRunning, Step: "merge develop"},
+			},
+		},
+		message: "main: merge develop",
+	})
+	model = updated.(Model)
+	if !model.processing {
+		t.Fatal("progress update should keep action processing")
+	}
+	if cmd == nil {
+		t.Fatal("expected next progress event wait command")
+	}
+	view := model.View().Content
+	for _, want := range []string{"Working: main: merge develop", "Current step", "merge develop"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestActionHandlerCanReportProgressEvent(t *testing.T) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		run := state.Run{
+			ID:     "run-1",
+			Source: "develop",
+			Mode:   "direct",
+			Targets: []state.Target{
+				{Branch: "main", Status: state.StatusRunning, Step: "merge develop"},
+			},
+		}
+		progress.Report(run, "main: merge develop")
+		return run, "started", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model := updated.(Model)
+	msg := cmd()
+	batch := msg.(tea.BatchMsg)
+	actionMsg := batch[0]()
+	eventMsg := batch[1]()
+	if _, ok := eventMsg.(progressEventMsg); !ok {
+		t.Fatalf("event message = %#v, want progress event", eventMsg)
+	}
+	updated, _ = model.Update(eventMsg)
+	model = updated.(Model)
+	if !strings.Contains(model.View().Content, "main: merge develop") {
+		t.Fatalf("view missing progress event:\n%s", model.View().Content)
+	}
+	updated, _ = model.Update(actionMsg)
+	if updated.(Model).processing {
+		t.Fatal("action result should finish processing")
 	}
 }
 
@@ -212,7 +368,7 @@ func TestKeyBindingsSetActions(t *testing.T) {
 }
 
 func TestResetKeyClearsRunView(t *testing.T) {
-	m := NewModelWithHandler(state.Run{ID: "run-1", Targets: []state.Target{{Branch: "main", Status: state.StatusBlocked}}}, func(action Action, targetIndex int) (state.Run, string, error) {
+	m := NewModelWithHandler(state.Run{ID: "run-1", Targets: []state.Target{{Branch: "main", Status: state.StatusBlocked}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		if action != ActionReset {
 			t.Fatalf("action = %q, want reset", action)
 		}
@@ -223,8 +379,8 @@ func TestResetKeyClearsRunView(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected reset command")
 	}
-	updated, _ = updated.(Model).Update(cmd())
-	view := updated.(Model).View().Content
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	view := model.View().Content
 	for _, want := range []string{"no targets", "Reset Git Spread state"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
@@ -237,7 +393,7 @@ func TestResetKeyClearsRunView(t *testing.T) {
 
 func TestKeyBindingRunsHandlerAndUpdatesMessage(t *testing.T) {
 	called := false
-	m := NewModelWithHandler(state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusFailed}}}, func(action Action, targetIndex int) (state.Run, string, error) {
+	m := NewModelWithHandler(state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusFailed}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		called = true
 		if action != ActionRefresh {
 			t.Fatalf("action = %q, want refresh", action)
@@ -252,8 +408,7 @@ func TestKeyBindingRunsHandlerAndUpdatesMessage(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected action command")
 	}
-	updated, _ = updated.(Model).Update(cmd())
-	model := updated.(Model)
+	model := updateWithActionResult(t, updated.(Model), cmd)
 	if !called {
 		t.Fatal("expected handler to be called")
 	}
@@ -262,6 +417,44 @@ func TestKeyBindingRunsHandlerAndUpdatesMessage(t *testing.T) {
 	}
 	if !strings.Contains(model.View().Content, "refreshed") {
 		t.Fatalf("view missing action message:\n%s", model.View().Content)
+	}
+}
+
+func TestRunScreenPRHelpShowsExecutableCommandHint(t *testing.T) {
+	m := NewModelWithHandler(state.Run{
+		Kind:   "branch",
+		Source: "develop",
+		Mode:   "direct",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusRejected},
+		},
+	}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		if action != ActionSwitchToPR {
+			t.Fatalf("action = %q, want PR help", action)
+		}
+		return state.Run{
+			Kind:   "branch",
+			Source: "develop",
+			Mode:   "direct",
+			Targets: []state.Target{
+				{Branch: "main", Status: state.StatusRejected},
+			},
+		}, "PR mode: run git spread branch develop --to main --mode pr", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Text: "p", Code: 'p'}))
+	if cmd == nil {
+		t.Fatal("expected PR help command")
+	}
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	view := model.View().Content
+	for _, want := range []string{"PR mode", "git spread branch develop --to main --mode pr"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "not wired yet") {
+		t.Fatalf("view should not expose implementation status:\n%s", view)
 	}
 }
 

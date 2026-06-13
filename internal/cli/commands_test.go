@@ -151,7 +151,7 @@ func TestTUIRefreshAfterAbortDoesNotExposeMissingStatePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run, message, err := tuiActionHandler(ctx)(tui.ActionRefresh, 0)
+	run, message, err := tuiActionHandler(ctx)(tui.ActionRefresh, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +160,25 @@ func TestTUIRefreshAfterAbortDoesNotExposeMissingStatePath(t *testing.T) {
 	}
 	if !strings.Contains(message, "No active run") || strings.Contains(message, "state.json") {
 		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestPRModeHintUsesExecutableCommand(t *testing.T) {
+	run := state.Run{
+		Kind:   string(spread.KindBranch),
+		Source: "develop",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusRejected},
+		},
+	}
+
+	got := prModeHint(run, 0)
+	want := "PR mode: run git spread branch develop --to main --mode pr"
+	if got != want {
+		t.Fatalf("hint = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "not wired yet") {
+		t.Fatalf("hint exposes implementation status: %q", got)
 	}
 }
 

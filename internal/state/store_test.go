@@ -9,7 +9,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		Kind: "branch",
 		Targets: []Target{
 			{Branch: "release/1.0", Status: StatusDone},
-			{Branch: "release/1.1", Status: StatusConflict, WorkspacePath: ".spread/release-1.1", ConflictedFiles: []string{"user.go"}},
+			{Branch: "release/1.1", Status: StatusConflict, Step: "merge develop", WorkspacePath: ".spread/release-1.1", ConflictedFiles: []string{"user.go"}},
 		},
 	}
 
@@ -20,7 +20,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != "run-1" || got.Targets[1].ConflictedFiles[0] != "user.go" {
+	if got.ID != "run-1" || got.Targets[1].Step != "merge develop" || got.Targets[1].ConflictedFiles[0] != "user.go" {
 		t.Fatalf("loaded run = %#v", got)
 	}
 }

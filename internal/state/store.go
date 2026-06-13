@@ -38,6 +38,7 @@ type Run struct {
 type Target struct {
 	Branch          string   `json:"branch"`
 	Status          Status   `json:"status"`
+	Step            string   `json:"step,omitempty"`
 	WorkspacePath   string   `json:"workspacePath"`
 	ConflictedFiles []string `json:"conflictedFiles,omitempty"`
 	CreatedBranch   string   `json:"createdBranch,omitempty"`
