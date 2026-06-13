@@ -2,6 +2,7 @@ package spread
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -149,7 +150,7 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 
 func executeTarget(plan Plan, target TargetPlan, root git.Runner) error {
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
-	if err := root.Run("worktree", "add", "-B", target.Branch, workspace, target.Branch); err != nil {
+	if err := ensureWorktree(root, target.Branch, workspace, target.Branch); err != nil {
 		return err
 	}
 	w := git.NewRunner(workspace)
@@ -171,12 +172,44 @@ func executeTarget(plan Plan, target TargetPlan, root git.Runner) error {
 
 func executePropagationBranch(plan Plan, target TargetPlan, head string, root git.Runner) error {
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
-	if err := root.Run("worktree", "add", "-B", head, workspace, target.Branch); err != nil {
+	if err := ensureWorktree(root, head, workspace, target.Branch); err != nil {
 		return err
 	}
 	w := git.NewRunner(workspace)
 	args := append([]string{"cherry-pick"}, plan.Commits...)
 	return w.Run(args...)
+}
+
+func ensureWorktree(root git.Runner, branch string, workspace string, startPoint string) error {
+	if _, err := os.Stat(workspace); err != nil {
+		if os.IsNotExist(err) {
+			return root.Run("worktree", "add", "-B", branch, workspace, startPoint)
+		}
+		return err
+	}
+
+	w := git.NewRunner(workspace)
+	inside, err := w.Output("rev-parse", "--is-inside-work-tree")
+	if err != nil || strings.TrimSpace(inside) != "true" {
+		return fmt.Errorf("isolated workspace %s exists but is not a git worktree", workspace)
+	}
+
+	clean, err := workspaceClean(w)
+	if err != nil {
+		return err
+	}
+	if !clean {
+		return fmt.Errorf("isolated workspace %s has uncommitted changes; resolve them or abort before reusing it", workspace)
+	}
+
+	current, err := w.Output("branch", "--show-current")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(current) != branch {
+		return fmt.Errorf("isolated workspace %s is on branch %q, expected %q", workspace, strings.TrimSpace(current), branch)
+	}
+	return nil
 }
 
 func pushTarget(plan Plan, target TargetPlan, root git.Runner) error {
