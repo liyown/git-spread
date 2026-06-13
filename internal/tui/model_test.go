@@ -208,3 +208,17 @@ func TestKeyBindingRunsHandlerAndUpdatesMessage(t *testing.T) {
 		t.Fatalf("view missing action message:\n%s", model.View().Content)
 	}
 }
+
+func TestRunScreenCanClearMissingActiveRun(t *testing.T) {
+	m := NewModel(state.Run{ID: "run-1", Targets: []state.Target{{Branch: "main", Status: state.StatusDone}}})
+	updated, _ := m.Update(actionResultMsg{run: state.Run{}, message: "No active run. Press q to quit or restart git-spread."})
+	view := updated.(Model).View().Content
+	for _, want := range []string{"no targets", "No active run"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "state.json") || strings.Contains(view, "main") {
+		t.Fatalf("view should not show stale run or state path:\n%s", view)
+	}
+}

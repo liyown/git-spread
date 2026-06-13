@@ -487,6 +487,9 @@ func tuiActionHandler(ctx repoContext) tui.ActionHandler {
 		switch action {
 		case tui.ActionRefresh:
 			run, err := ctx.store.Load()
+			if errors.Is(err, os.ErrNotExist) {
+				return state.Run{}, "No active run. Press q to quit or restart git-spread.", nil
+			}
 			return run, "refreshed", err
 		case tui.ActionOpenWorkspace:
 			run, err := ctx.store.Load()
@@ -502,18 +505,16 @@ func tuiActionHandler(ctx repoContext) tui.ActionHandler {
 			return run, "continued run", err
 		case tui.ActionAbort:
 			run, err := ctx.store.Load()
+			if errors.Is(err, os.ErrNotExist) {
+				return state.Run{}, "No active run. Press q to quit or restart git-spread.", nil
+			}
 			if err != nil {
 				return run, "", err
 			}
 			if err := spread.Abort(ctx.store); err != nil {
 				return run, "", err
 			}
-			for i := range run.Targets {
-				if run.Targets[i].Status != state.StatusDone {
-					run.Targets[i].Status = state.StatusFailed
-				}
-			}
-			return run, "aborted active run", nil
+			return state.Run{}, "Aborted active run. Press q to quit or restart git-spread.", nil
 		case tui.ActionSwitchToPR:
 			run, err := ctx.store.Load()
 			return run, "switch to PR mode from TUI is not wired yet; run the command again with --mode pr", err

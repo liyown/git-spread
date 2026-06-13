@@ -175,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.err.Error()
 			return m, nil
 		}
-		if len(msg.run.Targets) > 0 {
+		if len(msg.run.Targets) > 0 || m.screen == ScreenRun {
 			m.run = msg.run
 			m.screen = ScreenRun
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))

@@ -10,6 +10,7 @@ import (
 	"github.com/liyown/git-spread/internal/git"
 	"github.com/liyown/git-spread/internal/spread"
 	"github.com/liyown/git-spread/internal/testutil"
+	"github.com/liyown/git-spread/internal/tui"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -138,5 +139,25 @@ func TestLoadRepoContextFromWorktreeUsesMainRepositoryState(t *testing.T) {
 	}
 	if gotStore != wantStore || filepath.Base(filepath.Dir(ctx.store.Path())) != "spread" {
 		t.Fatalf("store path = %q", ctx.store.Path())
+	}
+}
+
+func TestTUIRefreshAfterAbortDoesNotExposeMissingStatePath(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	t.Chdir(repo.Dir)
+	ctx, err := loadRepoContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, message, err := tuiActionHandler(ctx)(tui.ActionRefresh, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Targets) != 0 {
+		t.Fatalf("run = %#v, want empty run", run)
+	}
+	if !strings.Contains(message, "No active run") || strings.Contains(message, "state.json") {
+		t.Fatalf("message = %q", message)
 	}
 }
