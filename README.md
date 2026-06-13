@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/inst
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.2 sh
 ```
 
 Offline installers:

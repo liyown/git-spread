@@ -46,6 +46,9 @@ func ExecuteWithProgress(plan Plan, root git.Runner, store state.Store, progress
 	if err := store.Save(run); err != nil {
 		return run, err
 	}
+	if err := syncRemoteForRun(plan.Request, root, store, &run, progress); err != nil {
+		return run, err
+	}
 
 	for i, target := range plan.Targets {
 		run.CurrentTarget = i
@@ -128,6 +131,9 @@ func ExecuteWithGitHubProgress(plan Plan, root git.Runner, store state.Store, cl
 	if err := store.Save(run); err != nil {
 		return run, err
 	}
+	if err := syncRemoteForRun(plan.Request, root, store, &run, progress); err != nil {
+		return run, err
+	}
 	for i, target := range plan.Targets {
 		run.CurrentTarget = i
 		run.Targets[i].Status = state.StatusRunning
@@ -207,7 +213,7 @@ type stepReporter func(string) error
 
 func executeTarget(plan Plan, target TargetPlan, root git.Runner, report stepReporter) error {
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
-	if err := ensureWorktree(root, target.Branch, workspace, target.Branch, report); err != nil {
+	if err := ensureWorktree(root, target.Branch, workspace, targetStartPoint(plan.Request, target.Branch), report); err != nil {
 		return err
 	}
 	w := git.NewRunner(workspace)
@@ -235,7 +241,7 @@ func executeTarget(plan Plan, target TargetPlan, root git.Runner, report stepRep
 
 func executePropagationBranch(plan Plan, target TargetPlan, head string, root git.Runner, report stepReporter) error {
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
-	if err := ensureWorktree(root, head, workspace, target.Branch, report); err != nil {
+	if err := ensureWorktree(root, head, workspace, targetStartPoint(plan.Request, target.Branch), report); err != nil {
 		return err
 	}
 	w := git.NewRunner(workspace)
@@ -249,6 +255,9 @@ func executePropagationBranch(plan Plan, target TargetPlan, head string, root gi
 func ensureWorktree(root git.Runner, branch string, workspace string, startPoint string, report stepReporter) error {
 	if _, err := os.Stat(workspace); err != nil {
 		if os.IsNotExist(err) {
+			if err := ensureBranchCanReset(root, branch, startPoint, workspace); err != nil {
+				return err
+			}
 			if err := reportStep(report, "checkout "+branch); err != nil {
 				return err
 			}
@@ -281,7 +290,95 @@ func ensureWorktree(root git.Runner, branch string, workspace string, startPoint
 	if strings.TrimSpace(current) != branch {
 		return fmt.Errorf("isolated workspace %s is on branch %q, expected %q", workspace, strings.TrimSpace(current), branch)
 	}
+	if err := refreshWorkspaceBase(w, branch, workspace, startPoint, report); err != nil {
+		return err
+	}
 	return nil
+}
+
+func syncRemoteForRun(req Request, root git.Runner, store state.Store, run *state.Run, progress ProgressReporter) error {
+	if !shouldFetchRemote(req) {
+		return nil
+	}
+	if len(run.Targets) > 0 {
+		run.CurrentTarget = 0
+		run.Targets[0].Status = state.StatusRunning
+		if err := setTargetStep(store, run, 0, "fetch "+req.Remote, progress); err != nil {
+			return err
+		}
+	}
+	if err := root.Run("fetch", req.Remote, "--prune"); err != nil {
+		if len(run.Targets) > 0 {
+			setTargetError(&run.Targets[0], state.StatusFailed, err)
+			_ = store.Save(*run)
+		}
+		return err
+	}
+	return nil
+}
+
+func shouldFetchRemote(req Request) bool {
+	return req.Remote != "" && req.Remote != "."
+}
+
+func targetStartPoint(req Request, branch string) string {
+	if !shouldFetchRemote(req) {
+		return branch
+	}
+	return "refs/remotes/" + req.Remote + "/" + branch
+}
+
+func ensureBranchCanReset(root git.Runner, branch string, startPoint string, workspace string) error {
+	if startPoint == branch {
+		return nil
+	}
+	if err := root.Run("show-ref", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
+		return nil
+	}
+	ahead, err := aheadCount(root, startPoint, branch)
+	if err != nil {
+		return err
+	}
+	if ahead > 0 {
+		return workspaceActionError{message: fmt.Sprintf("Target branch %s has local commits not on %s. Push, reset, or rename that branch before reusing %s.", branch, shortRef(startPoint), workspace)}
+	}
+	return nil
+}
+
+func refreshWorkspaceBase(w git.Runner, branch string, workspace string, startPoint string, report stepReporter) error {
+	if startPoint == branch {
+		return nil
+	}
+	ahead, err := aheadCount(w, startPoint, "HEAD")
+	if err != nil {
+		return err
+	}
+	if ahead > 0 {
+		return workspaceActionError{message: fmt.Sprintf("Workspace has local commits not on %s. Open %s, push or reset them, then press c to continue.", shortRef(startPoint), workspace)}
+	}
+	if err := reportStep(report, "update "+branch+" from "+shortRef(startPoint)); err != nil {
+		return err
+	}
+	return w.Run("reset", "--hard", startPoint)
+}
+
+func aheadCount(r git.Runner, base string, head string) (int, error) {
+	out, err := r.Output("rev-list", "--left-right", "--count", base+"..."+head)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, fmt.Errorf("unexpected rev-list output %q", strings.TrimSpace(out))
+	}
+	if fields[1] == "0" {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func shortRef(ref string) string {
+	return strings.TrimPrefix(ref, "refs/remotes/")
 }
 
 type workspaceActionError struct {

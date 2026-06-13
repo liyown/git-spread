@@ -71,6 +71,9 @@ func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, 
 	report := func(step string) error {
 		return setTargetStep(store, run, index, step, progress)
 	}
+	if err := syncRemoteForTarget(root, store, plan.Request, run, index, progress); err != nil {
+		return err
+	}
 	if err := executeContinuingTarget(root, plan, TargetPlan{Branch: run.Targets[index].Branch, WorkspacePath: run.Targets[index].WorkspacePath}, client, report); err != nil {
 		if workspaceActionNeeded(err) {
 			setTargetError(&run.Targets[index], state.StatusBlocked, err)
@@ -93,6 +96,21 @@ func retryTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, 
 		return err
 	}
 	return store.Save(*run)
+}
+
+func syncRemoteForTarget(root git.Runner, store state.Store, req Request, run *state.Run, index int, progress ProgressReporter) error {
+	if !shouldFetchRemote(req) {
+		return nil
+	}
+	if err := setTargetStep(store, run, index, "fetch "+req.Remote, progress); err != nil {
+		return err
+	}
+	if err := root.Run("fetch", req.Remote, "--prune"); err != nil {
+		setTargetError(&run.Targets[index], state.StatusFailed, err)
+		_ = store.Save(*run)
+		return err
+	}
+	return nil
 }
 
 func completeTarget(root git.Runner, store state.Store, plan Plan, run *state.Run, index int, client gh.Client, progress ProgressReporter) error {
