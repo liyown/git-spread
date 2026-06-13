@@ -29,6 +29,11 @@ func NewModel(run state.Run) Model {
 	return Model{run: run}
 }
 
+func Run(run state.Run) error {
+	_, err := tea.NewProgram(NewModel(run)).Run()
+	return err
+}
+
 func (m Model) Init() tea.Cmd {
 	return nil
 }
@@ -76,5 +81,7 @@ func (m Model) View() tea.View {
 		}
 	}
 	fmt.Fprintf(&b, "\nActions\n  o   open workspace in editor\n  r   refresh status\n  c   continue\n  p   create PR instead\n  a   abort run\n")
-	return tea.NewView(b.String())
+	view := tea.NewView(b.String())
+	view.AltScreen = true
+	return view
 }

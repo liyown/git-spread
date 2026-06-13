@@ -383,8 +383,27 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if interactiveOutput(stdout) {
+		if err := tui.Run(run); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 	fmt.Fprint(stdout, tui.NewModel(run).View().Content)
 	return 0
+}
+
+func interactiveOutput(stdout io.Writer) bool {
+	file, ok := stdout.(*os.File)
+	if !ok {
+		return false
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeCharDevice != 0
 }
 
 func printStatus(stdout io.Writer, stderr io.Writer) int {
