@@ -60,23 +60,45 @@ The installed binary is `git-spread`. Git also lets you run it as `git spread` w
 
 ## Install
 
-From a local checkout:
+Online install with `curl`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | sh
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.0 sh
+```
+
+Offline install:
+
+1. Download the package for your platform from GitHub Releases.
+2. Extract it.
+3. Put `git-spread` or `git-spread.exe` on your `PATH`.
+
+Supported release packages:
+
+| OS | Architectures | Package |
+| --- | --- | --- |
+| macOS | `amd64`, `arm64` | `.tar.gz` |
+| Linux | `amd64`, `arm64` | `.tar.gz` |
+| Windows | `amd64`, `arm64` | `.zip` |
+
+Build from source:
 
 ```bash
 go install ./cmd/git-spread
 ```
 
-Or build a local binary:
-
-```bash
-go build -o ./bin/git-spread ./cmd/git-spread
-```
-
-Check the install:
+Check the install from any method:
 
 ```bash
 git spread --version
 ```
+
+See [Install Git Spread](docs/INSTALL.md) for offline package details, custom install directories, checksums, and the GitHub Actions release flow.
 
 ## Quick Start
 

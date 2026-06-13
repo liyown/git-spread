@@ -21,7 +21,7 @@ import (
 	"github.com/liyown/git-spread/internal/tui"
 )
 
-const Version = "dev"
+var Version = "dev"
 
 type app struct {
 	Init     initCmd     `cmd:"" help:"Create a .git-spread.yml config."`
