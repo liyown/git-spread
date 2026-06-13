@@ -74,6 +74,9 @@ func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 		}
 	}
 
+	if err := clearRunIfComplete(store, run); err != nil {
+		return run, err
+	}
 	return run, nil
 }
 
@@ -155,6 +158,9 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 		if err := store.Save(run); err != nil {
 			return run, err
 		}
+	}
+	if err := clearRunIfComplete(store, run); err != nil {
+		return run, err
 	}
 	return run, nil
 }
@@ -297,6 +303,25 @@ func markTargetDone(target *state.Target) {
 	target.Status = state.StatusDone
 	target.Error = ""
 	target.ConflictedFiles = nil
+}
+
+func clearRunIfComplete(store state.Store, run state.Run) error {
+	if !runComplete(run) {
+		return nil
+	}
+	return store.Clear()
+}
+
+func runComplete(run state.Run) bool {
+	if len(run.Targets) == 0 {
+		return false
+	}
+	for _, target := range run.Targets {
+		if target.Status != state.StatusDone {
+			return false
+		}
+	}
+	return true
 }
 
 func conflictedFiles(r git.Runner) ([]string, error) {

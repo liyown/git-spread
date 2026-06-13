@@ -1,6 +1,8 @@
 package spread
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -36,6 +38,9 @@ func TestContinueAfterUserCommittedMarksTargetDone(t *testing.T) {
 	}
 	if updated.Targets[0].Status != state.StatusDone {
 		t.Fatalf("status = %q, want done", updated.Targets[0].Status)
+	}
+	if _, err := store.Load(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active run should be cleared after completion, err = %v", err)
 	}
 }
 

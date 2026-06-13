@@ -1,6 +1,7 @@
 package spread
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,9 @@ func TestExecuteBranchDirectMergesIntoTargetWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "release-1.0", "feature.txt")); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.Load(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active run should be cleared after completion, err = %v", err)
 	}
 }
 

@@ -39,6 +39,9 @@ func continueRun(root git.Runner, store state.Store, client gh.Client) (state.Ru
 			return run, err
 		}
 	}
+	if err := clearRunIfComplete(store, run); err != nil {
+		return run, err
+	}
 	return run, nil
 }
 
