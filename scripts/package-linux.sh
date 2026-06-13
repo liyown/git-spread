@@ -57,7 +57,8 @@ EOF
 build_rpm() {
   local arch="$1"
   local binary="$2"
-  local rpm_tree="${dist_dir}/work/rpm/${arch}"
+  local rpm_tree
+  rpm_tree="$(cd "$dist_dir" && pwd -P)/work/rpm/${arch}"
   local spec="${rpm_tree}/SPECS/git-spread.spec"
   local rpm_target
   rpm_target="$(rpm_arch "$arch")"

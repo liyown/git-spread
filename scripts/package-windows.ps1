@@ -64,7 +64,7 @@ foreach ($Arch in $WindowsArches.Split(" ", [System.StringSplitOptions]::RemoveE
 </Wix>
 "@ | Set-Content -Path $WxsPath -Encoding UTF8
 
-    wix build -arch $WixArch -o $MsiPath $WxsPath
+    wix build -acceptEula wix7 -arch $WixArch -o $MsiPath $WxsPath
 }
 
 Remove-Item -Recurse -Force (Join-Path $DistDir "work")
