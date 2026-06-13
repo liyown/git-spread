@@ -46,3 +46,33 @@ func TestKeyBindingsSetActions(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyBindingRunsHandlerAndUpdatesMessage(t *testing.T) {
+	called := false
+	m := NewModelWithHandler(state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusFailed}}}, func(action Action, targetIndex int) (state.Run, string, error) {
+		called = true
+		if action != ActionRefresh {
+			t.Fatalf("action = %q, want refresh", action)
+		}
+		if targetIndex != 0 {
+			t.Fatalf("target index = %d, want 0", targetIndex)
+		}
+		return state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusDone}}}, "refreshed", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'}))
+	if cmd == nil {
+		t.Fatal("expected action command")
+	}
+	updated, _ = updated.(Model).Update(cmd())
+	model := updated.(Model)
+	if !called {
+		t.Fatal("expected handler to be called")
+	}
+	if model.run.Targets[0].Status != state.StatusDone {
+		t.Fatalf("status = %q, want done", model.run.Targets[0].Status)
+	}
+	if !strings.Contains(model.View().Content, "refreshed") {
+		t.Fatalf("view missing action message:\n%s", model.View().Content)
+	}
+}

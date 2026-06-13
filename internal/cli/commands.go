@@ -394,7 +394,7 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 	if interactiveOutput(stdout) {
-		if err := tui.Run(run); err != nil {
+		if err := tui.RunWithHandler(run, tuiActionHandler(ctx)); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -402,6 +402,48 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, tui.NewModel(run).View().Content)
 	return 0
+}
+
+func tuiActionHandler(ctx repoContext) tui.ActionHandler {
+	return func(action tui.Action, targetIndex int) (state.Run, string, error) {
+		switch action {
+		case tui.ActionRefresh:
+			run, err := ctx.store.Load()
+			return run, "refreshed", err
+		case tui.ActionOpenWorkspace:
+			run, err := ctx.store.Load()
+			if err != nil {
+				return run, "", err
+			}
+			if err := openTargetWorkspace(ctx, run, targetIndex, ctx.config.Defaults.Editor); err != nil {
+				return run, "", err
+			}
+			return run, "opened workspace in editor", nil
+		case tui.ActionContinue:
+			run, err := continueActiveRun(ctx)
+			return run, "continued run", err
+		case tui.ActionAbort:
+			run, err := ctx.store.Load()
+			if err != nil {
+				return run, "", err
+			}
+			if err := spread.Abort(ctx.store); err != nil {
+				return run, "", err
+			}
+			for i := range run.Targets {
+				if run.Targets[i].Status != state.StatusDone {
+					run.Targets[i].Status = state.StatusFailed
+				}
+			}
+			return run, "aborted active run", nil
+		case tui.ActionSwitchToPR:
+			run, err := ctx.store.Load()
+			return run, "switch to PR mode from TUI is not wired yet; run the command again with --mode pr", err
+		default:
+			run, err := ctx.store.Load()
+			return run, "", err
+		}
+	}
 }
 
 func interactiveOutput(stdout io.Writer) bool {
@@ -441,29 +483,32 @@ func continueRun(stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	active, err := ctx.store.Load()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	var run state.Run
-	if active.Mode == string(spread.ModePR) {
-		req := requestForContinuingPR(active)
-		client, err := prepareGitHub(&req, ctx)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		run, err = spread.ContinueWithGitHub(ctx.git, ctx.store, client)
-	} else {
-		run, err = spread.Continue(ctx.git, ctx.store)
-	}
+	run, err := continueActiveRun(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	printRun(stdout, run)
 	return 0
+}
+
+func continueActiveRun(ctx repoContext) (state.Run, error) {
+	active, err := ctx.store.Load()
+	if err != nil {
+		return state.Run{}, err
+	}
+	var run state.Run
+	if active.Mode == string(spread.ModePR) {
+		req := requestForContinuingPR(active)
+		client, err := prepareGitHub(&req, ctx)
+		if err != nil {
+			return state.Run{}, err
+		}
+		run, err = spread.ContinueWithGitHub(ctx.git, ctx.store, client)
+	} else {
+		run, err = spread.Continue(ctx.git, ctx.store)
+	}
+	return run, err
 }
 
 func requestForContinuingPR(run state.Run) spread.Request {
@@ -500,6 +545,39 @@ func abortRun(stdout io.Writer, stderr io.Writer) int {
 }
 
 func openCurrent(cmd openCmd, stdout io.Writer, stderr io.Writer) int {
+	if cmd.Print {
+		return printCurrentOpenCommand(cmd, stdout, stderr)
+	}
+	ctx, err := loadRepoContext()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	run, err := ctx.store.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := openTargetWorkspace(ctx, run, run.CurrentTarget, cmd.Editor); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func openTargetWorkspace(ctx repoContext, run state.Run, targetIndex int, editorName string) error {
+	if targetIndex < 0 || targetIndex >= len(run.Targets) {
+		return fmt.Errorf("current target is outside target list")
+	}
+	workspace := filepath.Join(ctx.root, run.Targets[targetIndex].WorkspacePath)
+	editorCmd, args, err := editor.Command(editorName, workspace)
+	if err != nil {
+		return err
+	}
+	return exec.Command(editorCmd, args...).Start()
+}
+
+func printCurrentOpenCommand(cmd openCmd, stdout io.Writer, stderr io.Writer) int {
 	ctx, err := loadRepoContext()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -520,13 +598,6 @@ func openCurrent(cmd openCmd, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if cmd.Print {
-		fmt.Fprintf(stdout, "%s %s\n", editorCmd, strings.Join(args, " "))
-		return 0
-	}
-	if err := exec.Command(editorCmd, args...).Start(); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
+	fmt.Fprintf(stdout, "%s %s\n", editorCmd, strings.Join(args, " "))
 	return 0
 }
