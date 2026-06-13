@@ -62,7 +62,7 @@ func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 			_ = store.Save(run)
 			return run, err
 		}
-		run.Targets[i].Status = state.StatusDone
+		markTargetDone(&run.Targets[i])
 		if err := store.Save(run); err != nil {
 			return run, err
 		}
@@ -140,7 +140,7 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 			return run, err
 		}
 		run.Targets[i].PullRequestURL = created.URL
-		run.Targets[i].Status = state.StatusDone
+		markTargetDone(&run.Targets[i])
 		if err := store.Save(run); err != nil {
 			return run, err
 		}
@@ -267,6 +267,12 @@ func setTargetError(target *state.Target, status state.Status, err error) {
 	if err != nil {
 		target.Error = err.Error()
 	}
+}
+
+func markTargetDone(target *state.Target) {
+	target.Status = state.StatusDone
+	target.Error = ""
+	target.ConflictedFiles = nil
 }
 
 func conflictedFiles(r git.Runner) ([]string, error) {

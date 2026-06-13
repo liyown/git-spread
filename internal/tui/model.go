@@ -361,7 +361,7 @@ func (m Model) renderTargetDetails() string {
 	if len(target.ConflictedFiles) > 0 {
 		lines = append(lines, "", "Conflicts:", "  "+strings.Join(target.ConflictedFiles, ", "))
 	}
-	if target.Error != "" {
+	if target.Error != "" && targetIssueVisible(target.Status) {
 		lines = append(lines, "", "Current issue:", "  "+target.Error)
 	}
 	if explanation := statusExplanation(target.Status); explanation != "" {
@@ -439,6 +439,15 @@ func statusExplanation(status state.Status) string {
 		return "Resolve conflicts in the workspace, then press c or run git-spread continue."
 	default:
 		return ""
+	}
+}
+
+func targetIssueVisible(status state.Status) bool {
+	switch status {
+	case state.StatusFailed, state.StatusRejected, state.StatusConflict:
+		return true
+	default:
+		return false
 	}
 }
 

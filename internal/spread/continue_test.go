@@ -39,6 +39,48 @@ func TestContinueAfterUserCommittedMarksTargetDone(t *testing.T) {
 	}
 }
 
+func TestContinueClearsStaleTargetErrorAfterSuccess(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("app.txt", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	workspace := filepath.Join(repo.Dir, ".spread", "release-1.0")
+	if err := git.NewRunner(repo.Dir).Run("worktree", "add", "-B", "release/1.0", workspace, "release/1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.NewRunner(workspace).Run("commit", "--allow-empty", "-m", "manual resolution"); err != nil {
+		t.Fatal(err)
+	}
+
+	run := state.Run{
+		ID:            "run-1",
+		Kind:          "commit",
+		CurrentTarget: 0,
+		Targets: []state.Target{
+			{Branch: "release/1.0", Status: state.StatusConflict, WorkspacePath: ".spread/release-1.0", Error: "old worktree failure", ConflictedFiles: []string{"app.txt"}},
+		},
+	}
+	if err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := Continue(git.NewRunner(repo.Dir), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Targets[0].Status != state.StatusDone {
+		t.Fatalf("status = %q, want done", updated.Targets[0].Status)
+	}
+	if updated.Targets[0].Error != "" {
+		t.Fatalf("error = %q, want empty", updated.Targets[0].Error)
+	}
+	if len(updated.Targets[0].ConflictedFiles) != 0 {
+		t.Fatalf("conflicted files = %#v, want empty", updated.Targets[0].ConflictedFiles)
+	}
+}
+
 func TestContinueRunsRemainingTargets(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.Write("README.md", "base\n")

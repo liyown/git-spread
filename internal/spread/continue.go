@@ -142,7 +142,7 @@ func finishPropagatedTarget(root git.Runner, plan Plan, run *state.Run, index in
 		}
 		run.Targets[index].PullRequestURL = created.URL
 	}
-	run.Targets[index].Status = state.StatusDone
+	markTargetDone(&run.Targets[index])
 	return nil
 }
 

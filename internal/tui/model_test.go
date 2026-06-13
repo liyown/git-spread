@@ -124,6 +124,20 @@ func TestViewShowsSelectedTargetError(t *testing.T) {
 	}
 }
 
+func TestViewHidesStaleErrorForDoneTarget(t *testing.T) {
+	m := NewModel(state.Run{
+		ID:   "run-1",
+		Mode: "direct",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusDone, Error: "old worktree failure"},
+		},
+	})
+	view := m.View().Content
+	if strings.Contains(view, "Current issue") || strings.Contains(view, "old worktree failure") {
+		t.Fatalf("done target should not show stale error:\n%s", view)
+	}
+}
+
 func TestRunViewUsesReadableStatusLabels(t *testing.T) {
 	m := NewModel(state.Run{
 		Targets: []state.Target{
