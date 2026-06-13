@@ -40,5 +40,10 @@ pkgbuild \
   --install-location "/" \
   "${dist_dir}/git-spread_${version}_darwin_universal.pkg"
 
+portable_dir="${dist_dir}/work/portable/git-spread_${version}_darwin_universal"
+mkdir -p "$portable_dir"
+install -m 0755 "${dist_dir}/work/root/usr/local/bin/git-spread" "${portable_dir}/git-spread"
+(cd "${dist_dir}/work/portable" && tar -czf "../../git-spread_${version}_darwin_universal.tar.gz" "git-spread_${version}_darwin_universal")
+
 rm -rf "${dist_dir}/work"
-echo "Created macOS installer in ${dist_dir}"
+echo "Created macOS installer and portable binary in ${dist_dir}"

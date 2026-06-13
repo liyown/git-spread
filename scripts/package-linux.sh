@@ -54,6 +54,16 @@ EOF
   dpkg-deb --build --root-owner-group "$package_dir" "${dist_dir}/git-spread_${version}_linux_${arch}.deb"
 }
 
+build_archive() {
+  local arch="$1"
+  local binary="$2"
+  local portable_dir="${dist_dir}/work/portable/git-spread_${version}_linux_${arch}"
+
+  mkdir -p "$portable_dir"
+  install -m 0755 "$binary" "${portable_dir}/git-spread"
+  (cd "${dist_dir}/work/portable" && tar -czf "../../git-spread_${version}_linux_${arch}.tar.gz" "git-spread_${version}_linux_${arch}")
+}
+
 build_rpm() {
   local arch="$1"
   local binary="$2"
@@ -97,9 +107,10 @@ for arch in $arches; do
   binary="${dist_dir}/work/bin/git-spread-linux-${arch}"
   echo "Building Linux installers for ${arch}"
   build_binary "$arch" "$binary"
+  build_archive "$arch" "$binary"
   build_deb "$arch" "$binary"
   build_rpm "$arch" "$binary"
 done
 
 rm -rf "${dist_dir}/work"
-echo "Created Linux installers in ${dist_dir}"
+echo "Created Linux installers and portable binaries in ${dist_dir}"

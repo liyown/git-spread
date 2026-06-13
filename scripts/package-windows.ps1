@@ -39,6 +39,12 @@ foreach ($Arch in $WindowsArches.Split(" ", [System.StringSplitOptions]::RemoveE
         -o $ExePath `
         $MainPackage
 
+    $PortableDir = Join-Path $BuildDir "portable/git-spread_${Version}_windows_${Arch}"
+    New-Item -ItemType Directory -Force -Path $PortableDir | Out-Null
+    Copy-Item -Path $ExePath -Destination (Join-Path $PortableDir "git-spread.exe")
+    $ZipPath = Join-Path $DistDir "git-spread_${Version}_windows_${Arch}.zip"
+    Compress-Archive -Path $PortableDir -DestinationPath $ZipPath -Force
+
     $WixArch = if ($Arch -eq "amd64") { "x64" } elseif ($Arch -eq "arm64") { "arm64" } else { throw "unsupported Windows arch: $Arch" }
     $WxsPath = Join-Path $BuildDir "git-spread.wxs"
     $MsiPath = Join-Path $DistDir "git-spread_${Version}_windows_${Arch}.msi"
@@ -68,4 +74,4 @@ foreach ($Arch in $WindowsArches.Split(" ", [System.StringSplitOptions]::RemoveE
 }
 
 Remove-Item -Recurse -Force (Join-Path $DistDir "work")
-Write-Host "Created Windows installers in $DistDir"
+Write-Host "Created Windows installers and portable binaries in $DistDir"

@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/inst
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.1 sh
 ```
 
 Offline installers:
@@ -84,6 +84,16 @@ Offline installers:
 | Windows x64 | `git-spread_<version>_windows_amd64.msi` |
 | Windows ARM64 | `git-spread_<version>_windows_arm64.msi` |
 | Checksums | `checksums.txt` |
+
+Portable executables:
+
+| Platform | Artifact |
+| --- | --- |
+| macOS universal | `git-spread_<version>_darwin_universal.tar.gz` |
+| Linux x64 | `git-spread_<version>_linux_amd64.tar.gz` |
+| Linux ARM64 | `git-spread_<version>_linux_arm64.tar.gz` |
+| Windows x64 | `git-spread_<version>_windows_amd64.zip` |
+| Windows ARM64 | `git-spread_<version>_windows_arm64.zip` |
 
 Release artifacts are built and uploaded by GitHub Actions when pushing a version tag:
 
