@@ -9,6 +9,7 @@ import (
 
 	"github.com/liyown/git-spread/internal/git"
 	"github.com/liyown/git-spread/internal/spread"
+	"github.com/liyown/git-spread/internal/state"
 	"github.com/liyown/git-spread/internal/testutil"
 	"github.com/liyown/git-spread/internal/tui"
 )
@@ -159,5 +160,110 @@ func TestTUIRefreshAfterAbortDoesNotExposeMissingStatePath(t *testing.T) {
 	}
 	if !strings.Contains(message, "No active run") || strings.Contains(message, "state.json") {
 		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestResetClearsActiveRunState(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	t.Chdir(repo.Dir)
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.Save(state.Run{
+		ID:            "run-1",
+		CurrentTarget: 0,
+		Targets:       []state.Target{{Branch: "main", Status: state.StatusBlocked, WorkspacePath: ".spread/main"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"reset"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := store.Load(); !os.IsNotExist(err) {
+		t.Fatalf("active run should be cleared, err=%v", err)
+	}
+	if !strings.Contains(stdout.String(), "reset Git Spread state") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunWithoutArgsShowsResetHintForCorruptedState(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	t.Chdir(repo.Dir)
+	stateDir := filepath.Join(repo.Dir, ".git", "spread")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte("{not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"State needs reset", "git-spread reset"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "invalid character") || strings.Contains(stderr.String(), "invalid character") {
+		t.Fatalf("should not expose JSON parser details: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestStatusShowsResetHintForCorruptedState(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	t.Chdir(repo.Dir)
+	stateDir := filepath.Join(repo.Dir, ".git", "spread")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte("{not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"State needs reset", "git-spread reset"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunWithoutArgsShowsResetHintForInvalidActiveRun(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	t.Chdir(repo.Dir)
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.Save(state.Run{
+		ID:            "run-1",
+		CurrentTarget: 4,
+		Targets:       []state.Target{{Branch: "main", Status: state.Status("strange"), WorkspacePath: ".spread/main"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"State needs reset", "current target is outside target list", "unknown target status", "git-spread reset"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
 	}
 }

@@ -34,6 +34,7 @@ type app struct {
 	Open     openCmd     `cmd:"" help:"Open the current conflicted workspace."`
 	Continue continueCmd `cmd:"" help:"Continue a paused run."`
 	Abort    abortCmd    `cmd:"" help:"Abort the active run."`
+	Reset    resetCmd    `cmd:"" help:"Reset Git Spread state without deleting workspaces."`
 	NoTUI    bool        `help:"Disable interactive TUI."`
 }
 
@@ -89,6 +90,8 @@ type openCmd struct {
 type continueCmd struct{}
 
 type abortCmd struct{}
+
+type resetCmd struct{}
 
 const configTemplate = `version: 1
 
@@ -166,6 +169,8 @@ func handleNonPropagation(command string, cli app, stdout io.Writer, stderr io.W
 		return continueRun(stdout, stderr), true
 	case "abort":
 		return abortRun(stdout, stderr), true
+	case "reset":
+		return resetRun(stdout, stderr), true
 	default:
 		return 0, false
 	}
@@ -413,8 +418,12 @@ func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		printStateResetHint(stdout, []string{"state is corrupted"})
+		return 0
+	}
+	if reasons := validateActiveRun(ctx, run); len(reasons) > 0 {
+		printStateResetHint(stdout, reasons)
+		return 0
 	}
 	if interactiveOutput(stdout) {
 		if err := tui.RunWithHandler(run, tuiActionHandler(ctx)); err != nil {
@@ -515,6 +524,11 @@ func tuiActionHandler(ctx repoContext) tui.ActionHandler {
 				return run, "", err
 			}
 			return state.Run{}, "Aborted active run. Press q to quit or restart git-spread.", nil
+		case tui.ActionReset:
+			if err := spread.Abort(ctx.store); err != nil {
+				return state.Run{}, "", err
+			}
+			return state.Run{}, "Reset Git Spread state. Press q to quit or restart git-spread.", nil
 		case tui.ActionSwitchToPR:
 			run, err := ctx.store.Load()
 			return run, "switch to PR mode from TUI is not wired yet; run the command again with --mode pr", err
@@ -549,8 +563,12 @@ func printStatus(stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		printStateResetHint(stdout, []string{"state is corrupted"})
+		return 0
+	}
+	if reasons := validateActiveRun(ctx, run); len(reasons) > 0 {
+		printStateResetHint(stdout, reasons)
+		return 0
 	}
 	printRun(stdout, run)
 	return 0
@@ -621,6 +639,67 @@ func abortRun(stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "aborted active Git Spread run")
 	return 0
+}
+
+func resetRun(stdout io.Writer, stderr io.Writer) int {
+	ctx, err := loadRepoContext()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := spread.Abort(ctx.store); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "reset Git Spread state")
+	return 0
+}
+
+func validateActiveRun(ctx repoContext, run state.Run) []string {
+	var reasons []string
+	if len(run.Targets) == 0 {
+		reasons = append(reasons, "run has no targets")
+	}
+	if run.CurrentTarget < 0 || run.CurrentTarget >= len(run.Targets) {
+		reasons = append(reasons, "current target is outside target list")
+	}
+	for _, target := range run.Targets {
+		if !knownStatus(target.Status) {
+			reasons = append(reasons, fmt.Sprintf("unknown target status %q on %s", target.Status, branchOrDash(target.Branch)))
+		}
+		if target.WorkspacePath != "" && target.Status != state.StatusPending && target.Status != state.StatusDone {
+			if _, err := os.Stat(filepath.Join(ctx.root, target.WorkspacePath)); errors.Is(err, os.ErrNotExist) {
+				reasons = append(reasons, "workspace is missing: "+target.WorkspacePath)
+			}
+		}
+	}
+	return reasons
+}
+
+func knownStatus(status state.Status) bool {
+	switch status {
+	case state.StatusPending, state.StatusRunning, state.StatusDone, state.StatusConflict, state.StatusBlocked, state.StatusRejected, state.StatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func printStateResetHint(stdout io.Writer, reasons []string) {
+	fmt.Fprintln(stdout, "State needs reset")
+	for _, reason := range reasons {
+		fmt.Fprintf(stdout, "  - %s\n", reason)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Run:")
+	fmt.Fprintln(stdout, "  git-spread reset")
+}
+
+func branchOrDash(branch string) string {
+	if branch == "" {
+		return "-"
+	}
+	return branch
 }
 
 func openCurrent(cmd openCmd, stdout io.Writer, stderr io.Writer) int {

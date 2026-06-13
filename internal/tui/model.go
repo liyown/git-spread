@@ -49,6 +49,7 @@ const (
 	ActionContinue      Action = "continue"
 	ActionSwitchToPR    Action = "switch-to-pr"
 	ActionAbort         Action = "abort"
+	ActionReset         Action = "reset"
 	ActionRunTask       Action = "run-task"
 	ActionPlanTask      Action = "plan-task"
 )
@@ -168,6 +169,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.LastAction = ActionAbort
 			return m.startAction(ActionAbort)
+		case "x":
+			if m.screen == ScreenTasks {
+				return m, nil
+			}
+			m.LastAction = ActionReset
+			return m.startAction(ActionReset)
 		}
 	case actionResultMsg:
 		m.processing = false
@@ -322,7 +329,7 @@ func (m Model) runView() tea.View {
 	if m.message != "" {
 		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
 	}
-	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   q quit", innerWidth))
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   x reset   q quit", innerWidth))
 	return altView(frameStyle.Width(surfaceWidth).Render(body))
 }
 

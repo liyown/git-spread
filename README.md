@@ -10,6 +10,7 @@ git spread branch develop --to release/1.0,main --no-tui
 git spread commit abc123 --to release/1.0 --mode pr --no-tui
 git spread pr 123 --to release/* --mode pr --no-tui
 git spread
+git spread reset
 ```
 
 Conflicts are resolved in isolated workspaces under `.spread/`. Open the workspace in your editor, resolve the conflict, then run:
@@ -17,6 +18,14 @@ Conflicts are resolved in isolated workspaces under `.spread/`. Open the workspa
 ```bash
 git spread continue
 ```
+
+If Git Spread reports an invalid or corrupted active state, reset only the tool state:
+
+```bash
+git spread reset
+```
+
+This removes `.git/spread/state.json`. It does not delete `.spread/` workspaces or discard user changes.
 
 ## Design
 

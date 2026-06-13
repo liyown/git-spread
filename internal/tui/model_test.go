@@ -199,6 +199,7 @@ func TestKeyBindingsSetActions(t *testing.T) {
 		{key: "c", want: ActionContinue},
 		{key: "p", want: ActionSwitchToPR},
 		{key: "a", want: ActionAbort},
+		{key: "x", want: ActionReset},
 	}
 	for _, tc := range cases {
 		m := NewModel(state.Run{Targets: []state.Target{{Branch: "release/1.0", Status: state.StatusConflict, WorkspacePath: ".spread/release-1.0"}}})
@@ -207,6 +208,30 @@ func TestKeyBindingsSetActions(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("key %q action = %q, want %q", tc.key, got, tc.want)
 		}
+	}
+}
+
+func TestResetKeyClearsRunView(t *testing.T) {
+	m := NewModelWithHandler(state.Run{ID: "run-1", Targets: []state.Target{{Branch: "main", Status: state.StatusBlocked}}}, func(action Action, targetIndex int) (state.Run, string, error) {
+		if action != ActionReset {
+			t.Fatalf("action = %q, want reset", action)
+		}
+		return state.Run{}, "Reset Git Spread state. Press q to quit or restart git-spread.", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}))
+	if cmd == nil {
+		t.Fatal("expected reset command")
+	}
+	updated, _ = updated.(Model).Update(cmd())
+	view := updated.(Model).View().Content
+	for _, want := range []string{"no targets", "Reset Git Spread state"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "main") {
+		t.Fatalf("view should not show stale target after reset:\n%s", view)
 	}
 }
 
