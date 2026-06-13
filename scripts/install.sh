@@ -3,11 +3,21 @@ set -eu
 
 repo="${GH_REPO:-liyown/git-spread}"
 version="${VERSION:-latest}"
-install_dir="${INSTALL_DIR:-$HOME/.local/bin}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "git-spread installer requires $1" >&2
+    exit 1
+  fi
+}
+
+run_privileged() {
+  if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "installation requires root privileges; re-run with sudo" >&2
     exit 1
   fi
 }
@@ -41,6 +51,38 @@ resolve_version() {
     head -n 1
 }
 
+linux_ext() {
+  if command -v dpkg >/dev/null 2>&1; then
+    echo "deb"
+    return
+  fi
+  if command -v rpm >/dev/null 2>&1; then
+    echo "rpm"
+    return
+  fi
+  echo "linux install requires dpkg or rpm" >&2
+  exit 1
+}
+
+install_artifact() {
+  os="$1"
+  artifact="$2"
+  case "$os" in
+    darwin)
+      run_privileged installer -pkg "$artifact" -target /
+      ;;
+    linux)
+      case "$artifact" in
+        *.deb) run_privileged dpkg -i "$artifact" ;;
+        *.rpm) run_privileged rpm -Uvh "$artifact" ;;
+      esac
+      ;;
+    windows)
+      msiexec.exe /i "$(cygpath -w "$artifact" 2>/dev/null || printf '%s' "$artifact")"
+      ;;
+  esac
+}
+
 need curl
 
 os="$(detect_os)"
@@ -52,17 +94,19 @@ if [ -z "$resolved_version" ]; then
   exit 1
 fi
 
-ext="tar.gz"
-binary="git-spread"
-if [ "$os" = "windows" ]; then
-  ext="zip"
-  binary="git-spread.exe"
-  need unzip
-else
-  need tar
-fi
+case "$os" in
+  darwin)
+    asset="git-spread_${resolved_version}_darwin_universal.pkg"
+    ;;
+  linux)
+    ext="$(linux_ext)"
+    asset="git-spread_${resolved_version}_linux_${arch}.${ext}"
+    ;;
+  windows)
+    asset="git-spread_${resolved_version}_windows_${arch}.msi"
+    ;;
+esac
 
-asset="git-spread_${resolved_version}_${os}_${arch}.${ext}"
 url="https://github.com/$repo/releases/download/$resolved_version/$asset"
 tmp="${TMPDIR:-/tmp}/git-spread-install.$$"
 
@@ -75,25 +119,5 @@ mkdir -p "$tmp"
 echo "Downloading $url"
 curl -fsSL "$url" -o "$tmp/$asset"
 
-if [ "$ext" = "zip" ]; then
-  unzip -q "$tmp/$asset" -d "$tmp/unpack"
-else
-  mkdir -p "$tmp/unpack"
-  tar -xzf "$tmp/$asset" -C "$tmp/unpack"
-fi
-
-found="$(find "$tmp/unpack" -type f -name "$binary" | head -n 1)"
-if [ -z "$found" ]; then
-  echo "archive did not contain $binary" >&2
-  exit 1
-fi
-
-mkdir -p "$install_dir"
-cp "$found" "$install_dir/$binary"
-chmod +x "$install_dir/$binary"
-
-echo "Installed $binary to $install_dir/$binary"
-case ":$PATH:" in
-  *":$install_dir:"*) ;;
-  *) echo "Add $install_dir to PATH to run: git spread" ;;
-esac
+install_artifact "$os" "$tmp/$asset"
+echo "Installed git-spread ${resolved_version}"

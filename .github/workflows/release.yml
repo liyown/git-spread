@@ -13,11 +13,12 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
-    env:
-      RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,15 +31,101 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Package
-        run: VERSION="${RELEASE_VERSION}" ./scripts/package.sh
+  package-macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Package macOS installer
+        run: VERSION="${RELEASE_VERSION}" DIST_DIR=dist ./scripts/package-macos.sh
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-macos
+          path: dist/*.pkg
+
+  package-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Package Linux installers
+        run: VERSION="${RELEASE_VERSION}" DIST_DIR=dist ./scripts/package-linux.sh
+
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-linux
+          path: |
+            dist/*.deb
+            dist/*.rpm
+
+  package-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Package Windows installers
+        shell: pwsh
+        run: .\scripts\package-windows.ps1 -Version "${env:RELEASE_VERSION}" -DistDir dist
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows
+          path: dist/*.msi
+
+  publish:
+    needs:
+      - package-macos
+      - package-linux
+      - package-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        run: cd dist && sha256sum * > checksums.txt
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
-          files: |
-            dist/git-spread_${{ env.RELEASE_VERSION }}_*.tar.gz
-            dist/git-spread_${{ env.RELEASE_VERSION }}_*.zip
-            dist/checksums.txt
+          files: dist/*
