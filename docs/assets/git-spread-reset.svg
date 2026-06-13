@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-label="Git Spread reset recovery output">
+  <rect width="1280" height="520" fill="#101114"/>
+  <rect x="42" y="40" width="1196" height="420" rx="10" fill="#171922" stroke="#6b63ff" stroke-width="2"/>
+  <circle cx="78" cy="72" r="8" fill="#ff5f57"/>
+  <circle cx="108" cy="72" r="8" fill="#ffbd2e"/>
+  <circle cx="138" cy="72" r="8" fill="#28c840"/>
+  <text x="72" y="138" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">$ git spread status</text>
+  <text x="72" y="196" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">State needs reset</text>
+  <text x="72" y="236" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">  - state is corrupted</text>
+  <text x="72" y="296" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Run:</text>
+  <text x="72" y="336" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">  git spread reset</text>
+  <text x="72" y="396" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">Resets .git/spread/state.json only. Workspaces and user changes stay untouched.</text>
+</svg>

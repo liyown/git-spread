@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Git Spread active run TUI">
+  <rect width="1280" height="720" fill="#101114"/>
+  <rect x="34" y="28" width="1212" height="636" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="66" y="80" fill="#b9dcff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="28" font-weight="700">Git Spread</text>
+  <text x="246" y="80" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">run 20260613T120013Z</text>
+  <text x="540" y="80" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">source develop</text>
+  <text x="760" y="80" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">mode direct</text>
+
+  <rect x="70" y="130" width="520" height="210" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="92" y="172" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Targets</text>
+  <text x="92" y="218" fill="#ffcc66" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700">&gt; needs action</text>
+  <text x="306" y="218" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">main</text>
+  <text x="118" y="262" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">done</text>
+  <text x="306" y="262" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">release/1.0</text>
+
+  <rect x="630" y="130" width="560" height="365" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="654" y="172" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Details</text>
+  <text x="654" y="218" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Target: main</text>
+  <text x="654" y="256" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Status: needs action</text>
+  <text x="654" y="318" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Workspace:</text>
+  <text x="684" y="356" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">.spread/main</text>
+  <text x="654" y="418" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Action needed:</text>
+  <text x="684" y="456" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">Open workspace, commit/stash/discard,</text>
+  <text x="684" y="488" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">then press c to continue.</text>
+
+  <rect x="70" y="548" width="1120" height="84" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="92" y="584" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">Actions</text>
+  <text x="92" y="616" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">enter/o open workspace   c continue   r refresh   a abort   x reset   q quit</text>
+</svg>

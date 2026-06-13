@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Git Spread task selector TUI">
+  <rect width="1280" height="720" fill="#101114"/>
+  <rect x="34" y="28" width="1212" height="636" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="66" y="80" fill="#b9dcff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="28" font-weight="700">Git Spread - Tasks</text>
+  <text x="340" y="80" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">choose a configured propagation</text>
+
+  <rect x="70" y="130" width="520" height="210" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="92" y="172" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Tasks</text>
+  <text x="92" y="218" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700">&gt; release</text>
+  <text x="316" y="218" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700">branch</text>
+  <text x="430" y="218" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700">direct</text>
+  <text x="118" y="262" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">backport</text>
+  <text x="316" y="262" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">commit</text>
+  <text x="430" y="262" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">pr</text>
+
+  <rect x="630" y="130" width="560" height="300" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="654" y="172" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Preview</text>
+  <text x="654" y="218" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Name:   release</text>
+  <text x="654" y="256" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Type:   branch</text>
+  <text x="654" y="294" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Mode:   direct</text>
+  <text x="654" y="332" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Flow:   develop -&gt; release/*, main</text>
+  <text x="654" y="370" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">From:   develop</text>
+  <text x="654" y="408" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">To:     release/*, main</text>
+
+  <rect x="70" y="518" width="1120" height="84" fill="#101114" stroke="#6b63ff" stroke-width="2"/>
+  <text x="92" y="554" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">Actions</text>
+  <text x="92" y="586" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Enter run    p plan    j/k move    q quit</text>
+</svg>
