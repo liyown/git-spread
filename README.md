@@ -84,6 +84,13 @@ Offline artifacts:
 | Windows ARM64 | `git-spread_<version>_windows_arm64.zip` |
 | Checksums | `checksums.txt` |
 
+Release artifacts are built and uploaded by GitHub Actions when pushing a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 Build from source:
 
 ```bash
@@ -95,8 +102,6 @@ Check the install from any method:
 ```bash
 git spread --version
 ```
-
-See [Install](docs/INSTALL.md) for extraction commands and release action output.
 
 ## Quick Start
 
