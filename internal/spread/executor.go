@@ -13,11 +13,18 @@ import (
 
 func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 	run := state.Run{
-		ID:     time.Now().UTC().Format("20060102T150405Z"),
-		Kind:   string(plan.Request.Kind),
-		Mode:   string(plan.Request.Mode),
-		Source: plan.Request.Source,
-		Items:  plan.Request.Items,
+		ID:            time.Now().UTC().Format("20060102T150405Z"),
+		Kind:          string(plan.Request.Kind),
+		Mode:          string(plan.Request.Mode),
+		Source:        plan.Request.Source,
+		Items:         plan.Request.Items,
+		Commits:       plan.Commits,
+		Remote:        plan.Request.Remote,
+		WorkspaceDir:  plan.Request.WorkspaceDir,
+		Collaboration: plan.Request.Collaboration,
+		ForkRemote:    plan.Request.ForkRemote,
+		HeadRemote:    plan.Request.HeadRemote,
+		HeadOwner:     plan.Request.HeadOwner,
 	}
 	for _, target := range plan.Targets {
 		run.Targets = append(run.Targets, state.Target{
@@ -68,11 +75,18 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 		return Execute(plan, root, store)
 	}
 	run := state.Run{
-		ID:     time.Now().UTC().Format("20060102T150405Z"),
-		Kind:   string(plan.Request.Kind),
-		Mode:   string(plan.Request.Mode),
-		Source: plan.Request.Source,
-		Items:  plan.Request.Items,
+		ID:            time.Now().UTC().Format("20060102T150405Z"),
+		Kind:          string(plan.Request.Kind),
+		Mode:          string(plan.Request.Mode),
+		Source:        plan.Request.Source,
+		Items:         plan.Request.Items,
+		Commits:       plan.Commits,
+		Remote:        plan.Request.Remote,
+		WorkspaceDir:  plan.Request.WorkspaceDir,
+		Collaboration: plan.Request.Collaboration,
+		ForkRemote:    plan.Request.ForkRemote,
+		HeadRemote:    plan.Request.HeadRemote,
+		HeadOwner:     plan.Request.HeadOwner,
 	}
 	for _, target := range plan.Targets {
 		run.Targets = append(run.Targets, state.Target{

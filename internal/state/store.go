@@ -23,6 +23,13 @@ type Run struct {
 	Mode          string   `json:"mode"`
 	Source        string   `json:"source,omitempty"`
 	Items         []string `json:"items,omitempty"`
+	Commits       []string `json:"commits,omitempty"`
+	Remote        string   `json:"remote,omitempty"`
+	WorkspaceDir  string   `json:"workspaceDir,omitempty"`
+	Collaboration string   `json:"collaboration,omitempty"`
+	ForkRemote    string   `json:"forkRemote,omitempty"`
+	HeadRemote    string   `json:"headRemote,omitempty"`
+	HeadOwner     string   `json:"headOwner,omitempty"`
 	Targets       []Target `json:"targets"`
 	CurrentTarget int      `json:"currentTarget"`
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,5 +70,44 @@ func TestConfigurePRHeadUsesForkRemoteOwner(t *testing.T) {
 	}
 	if req.HeadRemote != "fork" || req.HeadOwner != "me" {
 		t.Fatalf("request = %#v", req)
+	}
+}
+
+func TestLoadRepoContextFromWorktreeUsesMainRepositoryState(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	workspace := filepath.Join(repo.Dir, ".spread", "release-1.0")
+	if err := git.NewRunner(repo.Dir).Run("worktree", "add", "-B", "release/1.0", workspace, "release/1.0"); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	ctx, err := loadRepoContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRoot, err := filepath.EvalSymlinks(ctx.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot, err := filepath.EvalSymlinks(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRoot != wantRoot {
+		t.Fatalf("root = %q, want %q", gotRoot, wantRoot)
+	}
+	gotStore, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(ctx.store.Path())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStore, err := filepath.EvalSymlinks(filepath.Join(repo.Dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotStore != wantStore || filepath.Base(filepath.Dir(ctx.store.Path())) != "spread" {
+		t.Fatalf("store path = %q", ctx.store.Path())
 	}
 }

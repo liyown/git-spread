@@ -329,7 +329,17 @@ func loadRepoContext() (repoContext, error) {
 	if err != nil {
 		return repoContext{}, err
 	}
-	root := strings.TrimSpace(rootOut)
+	worktreeRoot := strings.TrimSpace(rootOut)
+	worktreeRunner := git.NewRunner(worktreeRoot)
+	commonDirOut, err := worktreeRunner.Output("rev-parse", "--git-common-dir")
+	if err != nil {
+		return repoContext{}, err
+	}
+	commonDir := strings.TrimSpace(commonDirOut)
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(worktreeRoot, commonDir)
+	}
+	root := filepath.Dir(commonDir)
 	runner := git.NewRunner(root)
 	branchOut, _ := runner.Output("branch", "--show-current")
 	cfg := config.Config{}
@@ -431,13 +441,48 @@ func continueRun(stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	run, err := spread.Continue(ctx.git, ctx.store)
+	active, err := ctx.store.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	var run state.Run
+	if active.Mode == string(spread.ModePR) {
+		req := requestForContinuingPR(active)
+		client, err := prepareGitHub(&req, ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		run, err = spread.ContinueWithGitHub(ctx.git, ctx.store, client)
+	} else {
+		run, err = spread.Continue(ctx.git, ctx.store)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	printRun(stdout, run)
 	return 0
+}
+
+func requestForContinuingPR(run state.Run) spread.Request {
+	forkRemote := run.ForkRemote
+	if forkRemote == "" {
+		forkRemote = "fork"
+	}
+	collaboration := run.Collaboration
+	if collaboration == "" {
+		collaboration = "auto"
+	}
+	return spread.Request{
+		Mode:          spread.ModePR,
+		Remote:        run.Remote,
+		Collaboration: collaboration,
+		ForkRemote:    forkRemote,
+		HeadRemote:    run.HeadRemote,
+		HeadOwner:     run.HeadOwner,
+	}
 }
 
 func abortRun(stdout io.Writer, stderr io.Writer) int {
