@@ -45,6 +45,18 @@ func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
 	}
 }
 
+func TestTaskViewUsesFramedLayout(t *testing.T) {
+	m := NewTaskModel([]TaskItem{
+		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
+	})
+	view := m.View().Content
+	for _, want := range []string{"┌", "┐", "└", "┘", "Git Spread - Tasks", "Preview", "Actions"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestTaskListPlanShowsPlanMessage(t *testing.T) {
 	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"main"}, Mode: "direct"}}, func(action Action, targetIndex int) (state.Run, string, error) {
 		if action != ActionPlanTask {
@@ -126,6 +138,23 @@ func TestRunViewUsesReadableStatusLabels(t *testing.T) {
 	}
 	if strings.Contains(view, "XX") || strings.Contains(view, "OK") {
 		t.Fatalf("view should not use symbolic status codes:\n%s", view)
+	}
+}
+
+func TestRunViewUsesFramedTargetsDetailsActionsLayout(t *testing.T) {
+	m := NewModel(state.Run{
+		ID:     "run-1",
+		Source: "develop",
+		Mode:   "direct",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusRejected, Error: "push rejected"},
+		},
+	})
+	view := m.View().Content
+	for _, want := range []string{"┌", "┐", "└", "┘", "Targets", "Details", "Actions", "Target: main", "Status: push rejected"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
 	}
 }
 

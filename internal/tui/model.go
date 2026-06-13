@@ -5,7 +5,39 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/liyown/git-spread/internal/state"
+)
+
+const (
+	surfaceWidth = 96
+	innerWidth   = 90
+	leftWidth    = 42
+	rightWidth   = 46
+)
+
+var (
+	frameStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(0, 1)
+	titleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("153")).
+			Bold(true)
+	subtleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+	focusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("120")).
+			Bold(true)
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("203")).
+			Bold(true)
+	warnStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
+	okStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("114")).
+		Bold(true)
 )
 
 type Action string
@@ -50,11 +82,11 @@ type Model struct {
 }
 
 func NewModel(run state.Run) Model {
-	return Model{run: run, screen: ScreenRun}
+	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run)}
 }
 
 func NewModelWithHandler(run state.Run, handler ActionHandler) Model {
-	return Model{run: run, screen: ScreenRun, handler: handler}
+	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run), handler: handler}
 }
 
 func NewTaskModel(tasks []TaskItem) Model {
@@ -191,6 +223,18 @@ func clampCursor(cursor int, count int) int {
 	return cursor
 }
 
+func initialTargetCursor(run state.Run) int {
+	if run.CurrentTarget >= 0 && run.CurrentTarget < len(run.Targets) && run.Targets[run.CurrentTarget].Status != state.StatusDone {
+		return run.CurrentTarget
+	}
+	for i, target := range run.Targets {
+		if target.Status != state.StatusDone {
+			return i
+		}
+	}
+	return 0
+}
+
 func (m Model) View() tea.View {
 	if m.screen == ScreenTasks {
 		return m.taskView()
@@ -199,55 +243,131 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) taskView() tea.View {
+	header := titleStyle.Render("Git Spread - Tasks") + "  " + subtleStyle.Render("choose a configured propagation")
+	tasks := m.renderTaskList()
+	preview := m.renderTaskPreview()
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		"",
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			panel("Tasks", tasks, leftWidth),
+			"  ",
+			panel("Preview", preview, rightWidth),
+		),
+	)
+	if m.message != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
+	}
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "Enter run   p plan   j/k move   q quit", innerWidth))
+	return altView(frameStyle.Width(surfaceWidth).Render(body))
+}
+
+func (m Model) renderTaskList() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Git Spread\n")
-	fmt.Fprintf(&b, "Task runner\n\n")
-	fmt.Fprintf(&b, "Tasks\n")
 	if len(m.tasks) == 0 {
-		fmt.Fprintf(&b, "  no tasks configured\n")
-	} else {
-		for i, task := range m.tasks {
-			prefix := " "
-			if i == m.cursor {
-				prefix = ">"
-			}
-			fmt.Fprintf(&b, "%s %-16s %-7s %s\n", prefix, task.Name, task.Kind, taskSummary(task))
+		return subtleStyle.Render("no tasks configured")
+	}
+	for i, task := range m.tasks {
+		prefix := " "
+		lineStyle := lipgloss.NewStyle()
+		if i == m.cursor {
+			prefix = ">"
+			lineStyle = focusStyle
+		}
+		fmt.Fprintf(&b, "%s %-14s %-7s %s\n", prefix, task.Name, task.Kind, task.Mode)
+		if i == m.cursor {
+			lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+			lines[len(lines)-1] = lineStyle.Render(lines[len(lines)-1])
+			b.Reset()
+			b.WriteString(strings.Join(lines, "\n"))
+			b.WriteString("\n")
 		}
 	}
-	m.writeMessage(&b)
-	fmt.Fprintf(&b, "\nEnter run   p plan   q quit\n")
-	return altView(b.String())
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m Model) renderTaskPreview() string {
+	if len(m.tasks) == 0 {
+		return subtleStyle.Render("Create .git-spread.yml tasks to use this view.")
+	}
+	task := m.tasks[clampCursor(m.cursor, len(m.tasks))]
+	lines := []string{
+		"Name:   " + task.Name,
+		"Type:   " + valueOrDash(task.Kind),
+		"Mode:   " + valueOrDash(task.Mode),
+	}
+	lines = append(lines, "Flow:   "+taskFlow(task))
+	if task.Source != "" {
+		lines = append(lines, "From:   "+task.Source)
+	}
+	lines = append(lines, "To:     "+strings.Join(task.Targets, ", "))
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) runView() tea.View {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Git Spread\n")
+	headerParts := []string{titleStyle.Render("Git Spread")}
 	if m.run.ID != "" {
-		fmt.Fprintf(&b, "Run %s\n", m.run.ID)
+		headerParts = append(headerParts, subtleStyle.Render("run "+m.run.ID))
 	}
-	fmt.Fprintf(&b, "\nSource: %-20s Mode: %s\n\n", valueOrDash(m.run.Source), valueOrDash(m.run.Mode))
-	fmt.Fprintf(&b, "Targets\n")
+	headerParts = append(headerParts, subtleStyle.Render("source "+valueOrDash(m.run.Source)), subtleStyle.Render("mode "+valueOrDash(m.run.Mode)))
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		strings.Join(headerParts, "  "),
+		"",
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			panel("Targets", m.renderTargetList(), leftWidth),
+			"  ",
+			panel("Details", m.renderTargetDetails(), rightWidth),
+		),
+	)
+	if m.message != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
+	}
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   q quit", innerWidth))
+	return altView(frameStyle.Width(surfaceWidth).Render(body))
+}
+
+func (m Model) renderTargetList() string {
+	var b strings.Builder
+	if len(m.run.Targets) == 0 {
+		return subtleStyle.Render("no targets")
+	}
 	for i, target := range m.run.Targets {
 		prefix := " "
 		if i == m.cursor {
 			prefix = ">"
 		}
-		fmt.Fprintf(&b, "%s %-14s %s\n", prefix, statusLabel(target.Status), target.Branch)
-		if target.Status == state.StatusConflict {
-			fmt.Fprintf(&b, "\nConflict summary for %s\n  Workspace: %s\n  Files:     %s\n", target.Branch, target.WorkspacePath, strings.Join(target.ConflictedFiles, ", "))
+		status := renderStatus(target.Status)
+		line := fmt.Sprintf("%s %-18s %s", prefix, status, target.Branch)
+		if i == m.cursor {
+			line = focusStyle.Render(line)
 		}
+		fmt.Fprintln(&b, line)
 	}
-	if m.cursor >= 0 && m.cursor < len(m.run.Targets) && m.run.Targets[m.cursor].Error != "" {
-		fmt.Fprintf(&b, "\nCurrent issue for %s\n  %s\n", m.run.Targets[m.cursor].Branch, m.run.Targets[m.cursor].Error)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m Model) renderTargetDetails() string {
+	if len(m.run.Targets) == 0 {
+		return subtleStyle.Render("No active target.")
 	}
-	if m.cursor >= 0 && m.cursor < len(m.run.Targets) {
-		if explanation := statusExplanation(m.run.Targets[m.cursor].Status); explanation != "" {
-			fmt.Fprintf(&b, "\nMeaning\n  %s\n", explanation)
-		}
+	target := m.run.Targets[clampCursor(m.cursor, len(m.run.Targets))]
+	lines := []string{
+		"Target: " + target.Branch,
+		"Status: " + statusLabel(target.Status),
 	}
-	m.writeMessage(&b)
-	fmt.Fprintf(&b, "\no open workspace   c continue   r refresh   p PR help   a abort   q quit\n")
-	return altView(b.String())
+	if target.WorkspacePath != "" {
+		lines = append(lines, "", "Workspace:", "  "+target.WorkspacePath)
+	}
+	if len(target.ConflictedFiles) > 0 {
+		lines = append(lines, "", "Conflicts:", "  "+strings.Join(target.ConflictedFiles, ", "))
+	}
+	if target.Error != "" {
+		lines = append(lines, "", "Current issue:", "  "+target.Error)
+	}
+	if explanation := statusExplanation(target.Status); explanation != "" {
+		lines = append(lines, "", "Meaning:", "  "+explanation)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) writeMessage(b *strings.Builder) {
@@ -270,6 +390,17 @@ func taskSummary(task TaskItem) string {
 		return task.Source + " -> " + targets + " (" + valueOrDash(task.Mode) + ")"
 	}
 	return "-> " + targets + " (" + valueOrDash(task.Mode) + ")"
+}
+
+func taskFlow(task TaskItem) string {
+	targets := strings.Join(task.Targets, ", ")
+	if targets == "" {
+		targets = "-"
+	}
+	if task.Source != "" {
+		return task.Source + " -> " + targets
+	}
+	return "-> " + targets
 }
 
 func valueOrDash(value string) string {
@@ -309,6 +440,56 @@ func statusExplanation(status state.Status) string {
 	default:
 		return ""
 	}
+}
+
+func renderStatus(status state.Status) string {
+	label := statusLabel(status)
+	switch status {
+	case state.StatusDone:
+		return okStyle.Render(label)
+	case state.StatusRunning:
+		return focusStyle.Render(label)
+	case state.StatusRejected, state.StatusFailed:
+		return errorStyle.Render(label)
+	case state.StatusConflict:
+		return warnStyle.Render(label)
+	default:
+		return subtleStyle.Render(label)
+	}
+}
+
+func panel(title string, body string, width int) string {
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(0, 1).
+		Width(width).
+		Render(subtleStyle.Render(title) + "\n" + body)
+}
+
+func actionBar(title string, text string, width int) string {
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Foreground(lipgloss.Color("111")).
+		Width(width).
+		Padding(0, 1).
+		Render(subtleStyle.Render(title) + "\n" + text)
+}
+
+func messageBlock(processing bool, message string, width int) string {
+	label := "Status"
+	style := subtleStyle
+	if processing {
+		label = "Working"
+		style = focusStyle
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Width(width).
+		Padding(0, 1).
+		Render(style.Render(label + ": " + message))
 }
 
 func altView(content string) tea.View {
