@@ -385,6 +385,64 @@ git spread continue
 
 The main burden is understanding that conflicts are resolved in an isolated workspace rather than the current checkout. The TUI and command output should repeat the exact path every time a run is paused.
 
+## Technical Stack
+
+Git Spread v1 uses modern Go and a small set of focused libraries.
+
+Runtime and toolchain:
+
+- Go module version: `go 1.26`
+- Local development toolchain: `go1.26.4`
+- Release builds should target macOS, Linux, and Windows for `amd64` and `arm64`.
+
+CLI parsing:
+
+- Use `github.com/alecthomas/kong v1.15.0`.
+- Model the command API as typed Go structs instead of building commands through generator-style boilerplate.
+- Keep parsed CLI input separate from normalized runtime plans so command parsing remains testable.
+
+TUI:
+
+- Use `charm.land/bubbletea/v2 v2.0.7` for the interactive control panel.
+- Use `charm.land/bubbles/v2 v2.1.0` for lists, spinners, help, and other reusable components.
+- Use `charm.land/lipgloss/v2 v2.0.4` for terminal layout and styling.
+- Use `charm.land/huh/v2 v2.0.3` for `git spread init` prompts and simple setup forms.
+
+The TUI architecture should mirror Bubble Tea's model, update, and view loop. Domain execution should run behind commands/messages rather than inside rendering code.
+
+Configuration:
+
+- Use `go.yaml.in/yaml/v3 v3.0.4` for `.git-spread.yml`.
+- Decode into typed config structs.
+- Apply defaults and CLI overrides in explicit normalization code.
+- Do not use Viper or Koanf in v1. The configuration model is file plus CLI overrides, so a larger configuration framework would hide precedence rules instead of simplifying them.
+
+Git operations:
+
+- Use the system `git` executable through a small internal runner interface.
+- Do not use `go-git` for v1 execution.
+- The tool depends on real Git behavior for merge, cherry-pick, worktree, conflict markers, index state, configured remotes, credentials, hooks, and push behavior.
+- Tests should use temporary real Git repositories and may replace the runner only where unit tests need deterministic command results.
+
+GitHub integration:
+
+- Use `github.com/cli/go-gh/v2 v2.13.0`.
+- Reuse GitHub CLI conventions for authentication, host handling, repository detection, and environment variables.
+- Keep all GitHub calls behind an internal interface so tests can mock PR lookup, fork detection, push target selection, and PR creation.
+
+Testing helpers:
+
+- Use the standard `testing` package.
+- Use `github.com/google/go-cmp v0.7.0` for structured comparisons.
+- Prefer temporary local Git repositories for behavior tests over mocking Git internals.
+
+Rejected stack choices:
+
+- Cobra is mature, but Kong better matches Git Spread's typed command grammar and keeps command definitions smaller.
+- Viper and Koanf are useful for multi-source configuration, but Git Spread v1 only needs a repository YAML file plus CLI overrides.
+- `go-git` is attractive for pure-Go portability, but it does not reduce risk for this product because the product's behavior must match the user's installed Git.
+- `tview` and `tcell` are good traditional terminal UI libraries, but Bubble Tea's message-driven model fits a propagation state machine better.
+
 ## Testing Strategy
 
 The implementation should be tested with local temporary Git repositories.
