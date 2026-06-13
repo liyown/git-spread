@@ -1,0 +1,19 @@
+version: 1
+
+defaults:
+  mode: direct
+  remote: origin
+  workspace: isolated
+  workspaceDir: .spread
+  editor: auto
+  github:
+    collaboration: auto
+    forkRemote: fork
+
+tasks:
+  release:
+    type: branch
+    from: develop
+    to:
+      - release/*
+      - main
