@@ -75,7 +75,7 @@ func TestExecuteCommitPRModeCreatesPropagationBranch(t *testing.T) {
 	repo.Commit("fix login")
 	commit := repo.Head()
 
-	req := Request{Kind: KindCommit, Items: []string{commit}, Targets: []string{"release/1.0"}, Mode: ModePR, Remote: ".", WorkspaceDir: ".spread"}
+	req := Request{Kind: KindCommit, Items: []string{commit}, Targets: []string{"release/1.0"}, Mode: ModePR, Remote: ".", WorkspaceDir: ".spread", HeadOwner: "me"}
 	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestExecuteCommitPRModeCreatesPropagationBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Targets[0].CreatedBranch == "" || client.Input.Head != run.Targets[0].CreatedBranch {
+	if run.Targets[0].CreatedBranch == "" || client.Input.Head != "me:"+run.Targets[0].CreatedBranch {
 		t.Fatalf("run=%#v input=%#v", run, client.Input)
 	}
 }

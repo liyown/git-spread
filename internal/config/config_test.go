@@ -37,6 +37,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.Defaults.GitHub.Collaboration != "auto" {
 		t.Fatalf("collaboration = %q, want auto", cfg.Defaults.GitHub.Collaboration)
 	}
+	if cfg.Defaults.GitHub.ForkRemote != "fork" {
+		t.Fatalf("fork remote = %q, want fork", cfg.Defaults.GitHub.ForkRemote)
+	}
 }
 
 func TestLoadTasks(t *testing.T) {

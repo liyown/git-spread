@@ -40,6 +40,26 @@ func TestNormalizePRRequiresInput(t *testing.T) {
 	}
 }
 
+func TestNormalizePRURLUsesNumber(t *testing.T) {
+	req, err := Normalize(CLIInput{Kind: KindPR, Items: []string{"https://github.com/acme/app/pull/123/"}, Targets: []string{"release/1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Items) != 1 || req.Items[0] != "123" {
+		t.Fatalf("items = %#v, want PR number", req.Items)
+	}
+}
+
+func TestNormalizeRejectsUnknownGitHubCollaboration(t *testing.T) {
+	cfg := config.Config{}
+	config.ApplyDefaults(&cfg)
+	cfg.Defaults.GitHub.Collaboration = "magic"
+	_, err := Normalize(CLIInput{Kind: KindBranch, Source: "develop", Targets: []string{"main"}, Config: cfg})
+	if err == nil {
+		t.Fatal("expected error for unknown collaboration mode")
+	}
+}
+
 func TestNormalizeTaskAppliesTaskDefaults(t *testing.T) {
 	cfg := config.Config{
 		Tasks: map[string]config.Task{

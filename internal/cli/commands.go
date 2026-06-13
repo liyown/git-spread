@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
+	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/liyown/git-spread/internal/config"
 	"github.com/liyown/git-spread/internal/editor"
 	"github.com/liyown/git-spread/internal/git"
+	ghclient "github.com/liyown/git-spread/internal/github"
 	"github.com/liyown/git-spread/internal/spread"
 	"github.com/liyown/git-spread/internal/state"
 	"github.com/liyown/git-spread/internal/tui"
@@ -97,6 +99,7 @@ defaults:
   editor: auto
   github:
     collaboration: auto
+    forkRemote: fork
 
 tasks:
   release:
@@ -221,7 +224,15 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	plan, err := spread.BuildPlan(req, ctx.git)
+	var client ghclient.Client
+	if needsGitHubClient(req, planOnly) {
+		client, err = prepareGitHub(&req, ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	plan, err := buildPlan(req, ctx.git, client)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -230,13 +241,79 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 		printPlan(stdout, plan)
 		return 0
 	}
-	run, err := spread.Execute(plan, ctx.git, ctx.store)
+	run, err := executePlan(plan, ctx.git, ctx.store, client)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	printRun(stdout, run)
 	return 0
+}
+
+func needsGitHubClient(req spread.Request, planOnly bool) bool {
+	if req.Kind == spread.KindPR {
+		return true
+	}
+	return req.Mode == spread.ModePR && !planOnly
+}
+
+func buildPlan(req spread.Request, runner git.Runner, client ghclient.Client) (spread.Plan, error) {
+	if req.Kind == spread.KindPR {
+		return spread.BuildPlanWithGitHub(req, runner, client)
+	}
+	return spread.BuildPlan(req, runner)
+}
+
+func executePlan(plan spread.Plan, runner git.Runner, store state.Store, client ghclient.Client) (state.Run, error) {
+	if plan.Request.Mode == spread.ModePR {
+		return spread.ExecuteWithGitHub(plan, runner, store, client)
+	}
+	return spread.Execute(plan, runner, store)
+}
+
+func prepareGitHub(req *spread.Request, ctx repoContext) (ghclient.Client, error) {
+	base, err := repositoryForRemote(ctx.git, req.Remote)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub repository for remote %q: %w", req.Remote, err)
+	}
+	if req.Mode == spread.ModePR {
+		if err := configurePRHead(req, ctx.git); err != nil {
+			return nil, err
+		}
+	}
+	return ghclient.NewGoGHClient(base.Owner, base.Name)
+}
+
+func configurePRHead(req *spread.Request, runner git.Runner) error {
+	switch req.Collaboration {
+	case "shared", "auto":
+		req.HeadRemote = req.Remote
+		return nil
+	case "fork":
+		fork, err := repositoryForRemote(runner, req.ForkRemote)
+		if err != nil {
+			return fmt.Errorf("github collaboration fork requires a Git remote named %q pointing to your fork: %w", req.ForkRemote, err)
+		}
+		req.HeadRemote = req.ForkRemote
+		req.HeadOwner = fork.Owner
+		return nil
+	default:
+		return fmt.Errorf("github collaboration %q is invalid", req.Collaboration)
+	}
+}
+
+func repositoryForRemote(runner git.Runner, remote string) (repository.Repository, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	url, err := runner.Output("remote", "get-url", remote)
+	if err == nil {
+		return repository.Parse(strings.TrimSpace(url))
+	}
+	if override := os.Getenv("GH_REPO"); override != "" {
+		return repository.Parse(override)
+	}
+	return repository.Repository{}, err
 }
 
 type repoContext struct {

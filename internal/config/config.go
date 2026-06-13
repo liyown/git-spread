@@ -24,6 +24,7 @@ type Defaults struct {
 
 type GitHubDefaults struct {
 	Collaboration string `yaml:"collaboration"`
+	ForkRemote    string `yaml:"forkRemote"`
 }
 
 type Task struct {
@@ -67,6 +68,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Defaults.GitHub.Collaboration == "" {
 		cfg.Defaults.GitHub.Collaboration = "auto"
+	}
+	if cfg.Defaults.GitHub.ForkRemote == "" {
+		cfg.Defaults.GitHub.ForkRemote = "fork"
 	}
 	if cfg.Tasks == nil {
 		cfg.Tasks = map[string]Task{}

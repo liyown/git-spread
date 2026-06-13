@@ -46,4 +46,7 @@ type Request struct {
 	WorkspaceDir  string
 	Editor        string
 	Collaboration string
+	ForkRemote    string
+	HeadRemote    string
+	HeadOwner     string
 }

@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/liyown/git-spread/internal/git"
+	"github.com/liyown/git-spread/internal/spread"
+	"github.com/liyown/git-spread/internal/testutil"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -50,5 +54,20 @@ func TestInitDryRunWritesConfigTemplate(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestConfigurePRHeadUsesForkRemoteOwner(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	if err := git.NewRunner(repo.Dir).Run("remote", "add", "fork", "https://github.com/me/example.git"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := spread.Request{Collaboration: "fork", ForkRemote: "fork"}
+	if err := configurePRHead(&req, git.NewRunner(repo.Dir)); err != nil {
+		t.Fatal(err)
+	}
+	if req.HeadRemote != "fork" || req.HeadOwner != "me" {
+		t.Fatalf("request = %#v", req)
 	}
 }

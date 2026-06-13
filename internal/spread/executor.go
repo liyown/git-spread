@@ -118,7 +118,7 @@ func ExecuteWithGitHub(plan Plan, root git.Runner, store state.Store, client gh.
 			return run, err
 		}
 
-		created, err := CreateTargetPR(client, head, target.Branch, fmt.Sprintf("Propagate changes to %s", target.Branch))
+		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, fmt.Sprintf("Propagate changes to %s", target.Branch))
 		if err != nil {
 			run.Targets[i].Status = state.StatusFailed
 			_ = store.Save(run)
@@ -174,18 +174,20 @@ func pushTarget(plan Plan, target TargetPlan, root git.Runner) error {
 }
 
 func pushHead(plan Plan, target TargetPlan, head string, root git.Runner) error {
-	if plan.Request.Remote == "" || plan.Request.Remote == "." {
+	remote := headRemote(plan.Request)
+	if remote == "" || remote == "." {
 		return nil
 	}
 	workspace := filepath.Join(root.Dir, target.WorkspacePath)
-	return git.NewRunner(workspace).Run("push", plan.Request.Remote, "HEAD:"+head)
+	return git.NewRunner(workspace).Run("push", remote, "HEAD:"+head)
 }
 
 func pushBranchHead(plan Plan, head string, root git.Runner) error {
-	if plan.Request.Remote == "" || plan.Request.Remote == "." {
+	remote := headRemote(plan.Request)
+	if remote == "" || remote == "." {
 		return nil
 	}
-	return root.Run("push", plan.Request.Remote, head)
+	return root.Run("push", remote, head)
 }
 
 func propagationBranch(plan Plan, target TargetPlan) string {
@@ -197,6 +199,20 @@ func propagationBranch(plan Plan, target TargetPlan) string {
 		}
 	}
 	return "spread/" + sanitizeBranch(target.Branch) + "/" + seed
+}
+
+func headRemote(req Request) string {
+	if req.HeadRemote != "" {
+		return req.HeadRemote
+	}
+	return req.Remote
+}
+
+func prHead(req Request, branch string) string {
+	if req.HeadOwner == "" {
+		return branch
+	}
+	return req.HeadOwner + ":" + branch
 }
 
 func conflictedFiles(r git.Runner) ([]string, error) {

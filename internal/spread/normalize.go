@@ -3,6 +3,7 @@ package spread
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/liyown/git-spread/internal/config"
 )
@@ -26,6 +27,10 @@ func Normalize(input CLIInput) (Request, error) {
 	if mode != string(ModeDirect) && mode != string(ModePR) {
 		return Request{}, fmt.Errorf("mode %q is invalid", mode)
 	}
+	collaboration := cfg.Defaults.GitHub.Collaboration
+	if collaboration != "auto" && collaboration != "shared" && collaboration != "fork" {
+		return Request{}, fmt.Errorf("github collaboration %q is invalid", collaboration)
+	}
 	if len(input.Targets) == 0 {
 		return Request{}, errors.New("at least one target branch is required")
 	}
@@ -40,7 +45,8 @@ func Normalize(input CLIInput) (Request, error) {
 		Workspace:     WorkspaceMode(cfg.Defaults.Workspace),
 		WorkspaceDir:  cfg.Defaults.WorkspaceDir,
 		Editor:        cfg.Defaults.Editor,
-		Collaboration: cfg.Defaults.GitHub.Collaboration,
+		Collaboration: collaboration,
+		ForkRemote:    cfg.Defaults.GitHub.ForkRemote,
 	}
 
 	switch req.Kind {
@@ -59,11 +65,21 @@ func Normalize(input CLIInput) (Request, error) {
 		if len(req.Items) != 1 {
 			return Request{}, errors.New("pr mode requires exactly one pull request number or URL")
 		}
+		req.Items[0] = normalizePRID(req.Items[0])
 	default:
 		return Request{}, fmt.Errorf("propagation type %q is invalid", req.Kind)
 	}
 
 	return req, nil
+}
+
+func normalizePRID(input string) string {
+	value := strings.TrimSpace(strings.TrimSuffix(input, "/"))
+	if value == "" {
+		return value
+	}
+	parts := strings.Split(value, "/")
+	return parts[len(parts)-1]
 }
 
 func mergeTask(input *CLIInput, task config.Task) {
