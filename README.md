@@ -140,7 +140,7 @@ defaults:
 tasks:
   release:
     type: branch
-    from: develop
+    from: auto
     to:
       - release/*
       - main
@@ -152,7 +152,7 @@ Open the TUI:
 git spread
 ```
 
-Select `release`, press `Enter`, and Git Spread will apply `develop` to every resolved target.
+Select `release`, press `Enter`, and Git Spread will apply your current branch to every resolved target. Set `from` to a concrete branch name such as `develop` when you do not want current-branch behavior.
 
 ## Common Workflows
 
@@ -317,7 +317,7 @@ defaults:
 tasks:
   release:
     type: branch
-    from: develop
+    from: auto
     to:
       - release/*
       - main
