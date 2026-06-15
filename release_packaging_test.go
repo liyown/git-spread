@@ -20,6 +20,8 @@ func TestReleasePublishesPortableBinaries(t *testing.T) {
 			"portable-binaries",
 			"dist/*.tar.gz",
 			"dist/*.zip",
+			"Checkout release notes",
+			"body_path: .github/releases/${{ env.RELEASE_VERSION }}.md",
 		},
 		"README": {
 			"Portable executables",

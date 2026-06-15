@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/inst
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.2 sh
+curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | VERSION=v0.1.3 sh
 ```
 
 Offline installers:
@@ -98,9 +98,11 @@ Portable executables:
 Release artifacts are built and uploaded by GitHub Actions when pushing a version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.3
+git push origin v0.1.3
 ```
+
+The prepared release notes for `v0.1.3` live in `.github/releases/v0.1.3.md`. Use them when creating or reviewing the GitHub release.
 
 Build from source:
 
