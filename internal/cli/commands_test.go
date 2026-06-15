@@ -54,7 +54,7 @@ func TestInitDryRunWritesConfigTemplate(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	for _, want := range []string{"version: 1", "mode: direct", "tasks:"} {
+	for _, want := range []string{"version: 1", "mode: direct", "tasks:", "from: auto"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
