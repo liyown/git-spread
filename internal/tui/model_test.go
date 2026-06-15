@@ -471,3 +471,37 @@ func TestRunScreenCanClearMissingActiveRun(t *testing.T) {
 		t.Fatalf("view should not show stale run or state path:\n%s", view)
 	}
 }
+
+func TestRunViewClipsLargeTargetErrorAndScrollsDetails(t *testing.T) {
+	largeError := strings.Join([]string{
+		"line 01", "line 02", "line 03", "line 04", "line 05", "line 06", "line 07", "line 08", "line 09", "line 10",
+		"line 11", "line 12", "line 13", "line 14", "line 15", "line 16", "line 17", "line 18", "line 19", "line 20",
+		"line 21", "line 22", "line 23", "line 24", "line 25",
+	}, "\n")
+	m := NewModel(state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusFailed, Error: largeError}}})
+
+	view := m.View().Content
+	if !strings.Contains(view, "pgup/pgdn") {
+		t.Fatalf("view should show detail scrolling hint for large errors:\n%s", view)
+	}
+	if strings.Contains(view, "line 25") {
+		t.Fatalf("view should not render the full error before scrolling:\n%s", view)
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
+	view = updated.(Model).View().Content
+	if !strings.Contains(view, "line 25") {
+		t.Fatalf("view should show later error lines after scrolling:\n%s", view)
+	}
+}
+
+func TestMessageBlockClipsLargeMessages(t *testing.T) {
+	message := strings.Join([]string{"line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7", "line 8"}, "\n")
+	block := messageBlock(false, message, innerWidth)
+	if !strings.Contains(block, "more lines hidden") {
+		t.Fatalf("message block should show truncation hint:\n%s", block)
+	}
+	if strings.Contains(block, "line 8") {
+		t.Fatalf("message block should not render every large message line:\n%s", block)
+	}
+}
