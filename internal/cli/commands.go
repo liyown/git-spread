@@ -108,7 +108,7 @@ defaults:
 tasks:
   release:
     type: branch
-    from: develop
+    from: auto
     to:
       - release/*
       - main

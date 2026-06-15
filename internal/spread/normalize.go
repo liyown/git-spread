@@ -51,7 +51,7 @@ func Normalize(input CLIInput) (Request, error) {
 
 	switch req.Kind {
 	case KindBranch:
-		if req.Source == "" {
+		if req.Source == "" || req.Source == "auto" {
 			req.Source = input.CurrentBranch
 		}
 		if req.Source == "" {
