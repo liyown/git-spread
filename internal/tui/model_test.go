@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/liyown/git-spread/internal/state"
 )
 
@@ -29,22 +32,25 @@ func updateWithActionResult(t *testing.T, m Model, cmd tea.Cmd) Model {
 }
 
 func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
-	called := false
+	var calls []Action
 	m := NewTaskModelWithHandler([]TaskItem{
 		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
 		{Name: "backport", Kind: "commit", Targets: []string{"release/*"}, Mode: "pr"},
 	}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
-		called = true
-		if action != ActionRunTask {
-			t.Fatalf("action = %q, want run task", action)
-		}
+		calls = append(calls, action)
 		if targetIndex != 1 {
 			t.Fatalf("target index = %d, want 1", targetIndex)
+		}
+		if action == ActionPrepareTask {
+			return state.Run{}, "Plan\n  kind: commit\n  targets:\n    - release/1.0", nil
+		}
+		if action != ActionRunTask {
+			t.Fatalf("action = %q, want run task", action)
 		}
 		return state.Run{ID: "run-1", Source: "develop", Mode: "direct", Targets: []state.Target{{Branch: "release/1.0", Status: state.StatusRunning}}}, "started backport", nil
 	})
 	view := m.View().Content
-	for _, want := range []string{"Git Spread Control Console", "Tasks", "release", "backport", "develop -> release/*, main", "Enter run", "p plan"} {
+	for _, want := range []string{"Git Spread Control Console", "Tasks", "release", "backport", "develop -> release/*, main", "Enter confirm", "p plan"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -53,14 +59,74 @@ func TestTaskListShowsTasksAndRunsSelectedTask(t *testing.T) {
 	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "j", Code: 'j'}))
 	updated, cmd := updated.(Model).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd == nil {
-		t.Fatal("expected task run command")
+		t.Fatal("expected task prepare command")
 	}
 	model := updateWithActionResult(t, updated.(Model), cmd)
-	if !called {
-		t.Fatal("expected task handler to be called")
+	if model.screen != ScreenConfirm {
+		t.Fatalf("screen = %q, want confirm", model.screen)
+	}
+	if !strings.Contains(model.View().Content, "Confirm run") || !strings.Contains(model.View().Content, "Plan") {
+		t.Fatalf("expected confirm screen:\n%s", model.View().Content)
+	}
+
+	updated, cmd = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected confirmed run command")
+	}
+	model = updateWithActionResult(t, updated.(Model), cmd)
+	if len(calls) != 2 || calls[0] != ActionPrepareTask || calls[1] != ActionRunTask {
+		t.Fatalf("calls = %#v", calls)
 	}
 	if !strings.Contains(model.View().Content, "Targets") || !strings.Contains(model.View().Content, "started backport") {
 		t.Fatalf("expected run panel after task run:\n%s", model.View().Content)
+	}
+}
+
+func TestConfirmScreenKeepsSelectedTaskWhenNavigationKeysArePressed(t *testing.T) {
+	var runTarget int
+	m := NewTaskModelWithHandler([]TaskItem{
+		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"main"}, Mode: "direct"},
+		{Name: "backport", Kind: "commit", Targets: []string{"release/*"}, Mode: "pr"},
+	}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		switch action {
+		case ActionPrepareTask:
+			return state.Run{}, "Plan for backport", nil
+		case ActionRunTask:
+			runTarget = targetIndex
+			return state.Run{ID: "run-1", Targets: []state.Target{{Branch: "release/1.0", Status: state.StatusRunning}}}, "started", nil
+		default:
+			return state.Run{}, "", nil
+		}
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "j", Code: 'j'}))
+	updated, cmd := updated.(Model).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	if model.screen != ScreenConfirm {
+		t.Fatalf("screen = %q, want confirm", model.screen)
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	model = updated.(Model)
+	view := model.View().Content
+	if !strings.Contains(view, "git spread run backport") || strings.Contains(view, "git spread run release") {
+		t.Fatalf("confirm screen changed selected task after up key:\n%s", view)
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "k", Code: 'k'}))
+	model = updated.(Model)
+	view = model.View().Content
+	if !strings.Contains(view, "git spread run backport") || strings.Contains(view, "git spread run release") {
+		t.Fatalf("confirm screen changed selected task after k key:\n%s", view)
+	}
+
+	updated, cmd = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected run command")
+	}
+	updateWithActionResult(t, updated.(Model), cmd)
+	if runTarget != 1 {
+		t.Fatalf("run target = %d, want selected task index 1", runTarget)
 	}
 }
 
@@ -73,6 +139,106 @@ func TestTaskViewUsesFramedLayout(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestTaskListFitsPanelAndLabelsTargets(t *testing.T) {
+	m := NewTaskModel([]TaskItem{
+		{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
+		{Name: "release2", Kind: "branch", Source: "develop", Targets: []string{"release/*", "main"}, Mode: "direct"},
+	})
+	m.cursor = 1
+
+	list := m.renderTaskList()
+	for _, want := range []string{"release2", "type branch", "mode direct", "from develop", "targets release/*, main"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("task list missing %q:\n%s", want, list)
+		}
+	}
+	if strings.Contains(list, "\n->") || strings.Contains(list, "\n  ->") {
+		t.Fatalf("task continuation line should not look like a selection arrow:\n%s", list)
+	}
+	maxContentWidth := leftWidth - 4
+	for _, line := range strings.Split(list, "\n") {
+		if width := lipgloss.Width(line); width > maxContentWidth {
+			t.Fatalf("task list line width = %d, want <= %d:\n%s", width, maxContentWidth, list)
+		}
+	}
+}
+
+func TestTaskListWindowsManyTasks(t *testing.T) {
+	tasks := make([]TaskItem, 8)
+	for i := range tasks {
+		tasks[i] = TaskItem{
+			Name:    fmt.Sprintf("task-%02d", i+1),
+			Kind:    "branch",
+			Source:  "develop",
+			Targets: []string{"main"},
+			Mode:    "direct",
+		}
+	}
+	m := NewTaskModel(tasks)
+
+	view := m.View().Content
+	for _, want := range []string{"Showing 1-2 of 8", "task-01", "task-02"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "task-03") {
+		t.Fatalf("task list should only show the first window:\n%s", view)
+	}
+
+	for i := 0; i < 5; i++ {
+		updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "j", Code: 'j'}))
+		m = updated.(Model)
+	}
+	view = m.View().Content
+	for _, want := range []string{"Showing 5-6 of 8", "task-05", "task-06"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q after moving:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "task-01") {
+		t.Fatalf("task list should scroll past hidden tasks:\n%s", view)
+	}
+}
+
+func TestTaskSearchFiltersAndNavigationCanJump(t *testing.T) {
+	m := NewTaskModel([]TaskItem{
+		{Name: "release", Kind: "branch", Group: "release", Description: "Release train", Source: "develop", Targets: []string{"main"}, Mode: "direct"},
+		{Name: "hotfix", Kind: "commit", Group: "patch", Description: "urgent backport", Targets: []string{"release/1.0"}, Mode: "pr"},
+		{Name: "docs", Kind: "branch", Group: "content", Description: "Documentation", Source: "docs", Targets: []string{"main"}, Mode: "direct"},
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "/", Code: '/'}))
+	m = updated.(Model)
+	for _, ch := range "patch" {
+		updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: string(ch), Code: rune(ch)}))
+		m = updated.(Model)
+	}
+	view := m.View().Content
+	for _, want := range []string{"Search: patch", "[patch] hotfix", "urgent backport"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "[release] release") || strings.Contains(view, "[content] docs") {
+		t.Fatalf("search should hide non-matching tasks:\n%s", view)
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "g", Code: 'g'}))
+	m = updated.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want hotfix global index 1", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "G", Code: 'G'}))
+	m = updated.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want only matching task index 1", m.cursor)
 	}
 }
 
@@ -104,6 +270,80 @@ func TestTaskListPlanShowsPlanMessage(t *testing.T) {
 	}
 }
 
+func TestCompletedTaskRunReturnsToTaskScreen(t *testing.T) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Source: "develop", Targets: []string{"main"}, Mode: "direct"}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		if action == ActionPrepareTask {
+			return state.Run{}, "Plan\n  release -> main", nil
+		}
+		return state.Run{
+			ID:     "run-1",
+			Source: "develop",
+			Mode:   "direct",
+			Targets: []state.Target{
+				{Branch: "main", Status: state.StatusDone},
+			},
+		}, "completed task release", nil
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected prepare command")
+	}
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	updated, cmd = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected run command")
+	}
+	model = updateWithActionResult(t, updated.(Model), cmd)
+	if model.screen != ScreenTasks {
+		t.Fatalf("screen = %q, want tasks", model.screen)
+	}
+	view := model.View().Content
+	for _, want := range []string{"Git Spread Control Console", "Tasks", "completed task release"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Run overview") {
+		t.Fatalf("completed task should not stay on run screen:\n%s", view)
+	}
+}
+
+func TestTaskRunErrorWithRunShowsRunScreenForReset(t *testing.T) {
+	m := NewTaskModelWithHandler([]TaskItem{{Name: "backport", Kind: "commit", Targets: []string{"main"}, Mode: "direct"}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
+		if action == ActionPrepareTask {
+			return state.Run{}, "Plan\n  backport -> main", nil
+		}
+		return state.Run{
+			ID:   "run-1",
+			Mode: "direct",
+			Targets: []state.Target{
+				{Branch: "main", Status: state.StatusFailed, WorkspacePath: ".spread/main", Error: "commit already applied"},
+			},
+		}, "", errors.New("git cherry-pick failed")
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected prepare command")
+	}
+	model := updateWithActionResult(t, updated.(Model), cmd)
+	updated, cmd = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("expected run command")
+	}
+	model = updateWithActionResult(t, updated.(Model), cmd)
+	if model.screen != ScreenRun {
+		t.Fatalf("screen = %q, want run", model.screen)
+	}
+	view := model.View().Content
+	for _, want := range []string{"main", "failed", "commit already applied", "x reset"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestTaskRunShowsProcessingMessageBeforeCommandCompletes(t *testing.T) {
 	m := NewTaskModelWithHandler([]TaskItem{{Name: "release", Kind: "branch", Targets: []string{"main"}}}, func(action Action, targetIndex int, progress ProgressReporter) (state.Run, string, error) {
 		return state.Run{Targets: []state.Target{{Branch: "main", Status: state.StatusRunning}}}, "started", nil
@@ -111,10 +351,10 @@ func TestTaskRunShowsProcessingMessageBeforeCommandCompletes(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd == nil {
-		t.Fatal("expected run command")
+		t.Fatal("expected prepare command")
 	}
 	view := updated.(Model).View().Content
-	if !strings.Contains(view, "Working: Starting selected task") {
+	if !strings.Contains(view, "Working: Preparing run confirmation") {
 		t.Fatalf("view missing processing message:\n%s", view)
 	}
 }
@@ -130,7 +370,7 @@ func TestViewShowsConflictWorkspace(t *testing.T) {
 		},
 	})
 	view := m.View().Content
-	for _, want := range []string{"release/1.1", ".spread/release-1.1", "user.go", "Next action", "Open workspace, resolve conflicts"} {
+	for _, want := range []string{"release/1.1", ".spread/release-1.1", "Conflicts: 2 files", "user.go", "Next action", "Open workspace, resolve conflicts"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}

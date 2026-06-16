@@ -33,6 +33,9 @@ func continueRun(root git.Runner, store state.Store, client gh.Client, progress 
 	if run.CurrentTarget < 0 || run.CurrentTarget >= len(run.Targets) {
 		return run, errors.New("current target is outside target list")
 	}
+	defer func() {
+		_ = store.AppendHistory(run)
+	}()
 
 	plan := planFromRun(run)
 	if err := completeCurrentTarget(root, store, plan, &run, run.CurrentTarget, client, progress); err != nil {
@@ -207,7 +210,7 @@ func finishPropagatedTarget(root git.Runner, store state.Store, plan Plan, run *
 		if err := setTargetStep(store, run, index, "create pull request", progress); err != nil {
 			return err
 		}
-		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, "Propagate changes to "+target.Branch)
+		created, err := CreateTargetPR(client, plan.Request, prHead(plan.Request, head), target.Branch)
 		if err != nil {
 			setTargetError(&run.Targets[index], state.StatusFailed, err)
 			return err
@@ -220,6 +223,7 @@ func finishPropagatedTarget(root git.Runner, store state.Store, plan Plan, run *
 
 func planFromRun(run state.Run) Plan {
 	req := Request{
+		Task:          run.Task,
 		Kind:          Kind(run.Kind),
 		Mode:          Mode(run.Mode),
 		Source:        run.Source,
@@ -230,6 +234,11 @@ func planFromRun(run state.Run) Plan {
 		ForkRemote:    run.ForkRemote,
 		HeadRemote:    run.HeadRemote,
 		HeadOwner:     run.HeadOwner,
+		PRTitle:       run.PRTitle,
+		PRBody:        run.PRBody,
+		PRDraft:       run.PRDraft,
+		PRLabels:      append([]string(nil), run.PRLabels...),
+		PRReviewers:   append([]string(nil), run.PRReviewers...),
 	}
 	return Plan{Request: req, Commits: run.Commits}
 }

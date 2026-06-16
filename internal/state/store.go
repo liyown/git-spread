@@ -1,9 +1,11 @@
 package state
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type Status string
@@ -20,6 +22,7 @@ const (
 
 type Run struct {
 	ID            string   `json:"id"`
+	Task          string   `json:"task,omitempty"`
 	Kind          string   `json:"kind"`
 	Mode          string   `json:"mode"`
 	Source        string   `json:"source,omitempty"`
@@ -31,8 +34,19 @@ type Run struct {
 	ForkRemote    string   `json:"forkRemote,omitempty"`
 	HeadRemote    string   `json:"headRemote,omitempty"`
 	HeadOwner     string   `json:"headOwner,omitempty"`
+	PRTitle       string   `json:"prTitle,omitempty"`
+	PRBody        string   `json:"prBody,omitempty"`
+	PRDraft       bool     `json:"prDraft,omitempty"`
+	PRLabels      []string `json:"prLabels,omitempty"`
+	PRReviewers   []string `json:"prReviewers,omitempty"`
 	Targets       []Target `json:"targets"`
 	CurrentTarget int      `json:"currentTarget"`
+}
+
+type HistoryEntry struct {
+	RecordedAt time.Time      `json:"recordedAt"`
+	Run        Run            `json:"run"`
+	Summary    map[Status]int `json:"summary"`
 }
 
 type Target struct {
@@ -56,6 +70,10 @@ func NewStore(dir string) Store {
 
 func (s Store) Path() string {
 	return filepath.Join(s.dir, "state.json")
+}
+
+func (s Store) HistoryPath() string {
+	return filepath.Join(s.dir, "history.jsonl")
 }
 
 func (s Store) Save(run Run) error {
@@ -87,4 +105,73 @@ func (s Store) Clear() error {
 		return nil
 	}
 	return err
+}
+
+func (s Store) AppendHistory(run Run) error {
+	if run.ID == "" || len(run.Targets) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return err
+	}
+	entry := HistoryEntry{
+		RecordedAt: time.Now().UTC(),
+		Run:        run,
+		Summary:    summarizeRun(run),
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(s.HistoryPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s Store) History(limit int) ([]HistoryEntry, error) {
+	file, err := os.Open(s.HistoryPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	var entries []HistoryEntry
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var entry HistoryEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return nil, err
+		}
+		if entry.Summary == nil {
+			entry.Summary = summarizeRun(entry.Run)
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
+func summarizeRun(run Run) map[Status]int {
+	summary := map[Status]int{}
+	for _, target := range run.Targets {
+		summary[target.Status]++
+	}
+	return summary
 }

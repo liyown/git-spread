@@ -61,6 +61,100 @@ func TestInitDryRunWritesConfigTemplate(t *testing.T) {
 	}
 }
 
+func TestInitTemplateDocumentsOptionalValues(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"init", "--print"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{
+		"# mode: direct, pr",
+		"# remote: origin, ., or another git remote",
+		"# workspace: isolated, current",
+		"# editor: auto, code, idea, cursor",
+		"# collaboration: auto, shared, fork",
+		"# type: branch, commit, pr",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("template missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestInitAddsSpreadToGitignore(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo.Dir, ".gitignore"), []byte("dist/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(repo.Dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); !strings.Contains(got, "\n.spread\n") {
+		t.Fatalf(".gitignore missing .spread entry:\n%s", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"init"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("second init code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if data, err = os.ReadFile(filepath.Join(repo.Dir, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(data), ".spread"); count != 1 {
+		t.Fatalf(".spread should be added once, count=%d:\n%s", count, string(data))
+	}
+}
+
+func TestExamplesCommandPrintsCommonWorkflows(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"examples"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"git spread branch", "git spread commit", "git spread pr", "git spread retry"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestCompletionCommandPrintsShellCompletion(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"completion", "zsh"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "#compdef git-spread") || !strings.Contains(stdout.String(), "history") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestUpdateCommandPrintsInstallCommand(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "scripts/install.sh") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestRunWithoutArgsShowsConfiguredTasksWhenNoActiveRun(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	if err := os.WriteFile(filepath.Join(repo.Dir, ".git-spread.yml"), []byte(`
@@ -86,6 +180,215 @@ tasks:
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestRunWithoutArgsReportsInvalidConfig(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo.Dir, ".git-spread.yml"), []byte(`
+version: 1
+tasks:
+  release:
+    type: branch
+    from: develop
+    to:
+      - main
+  release:
+    type: branch
+    from: develop
+    to:
+      - release/1.0
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(nil, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit, stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `duplicate task name "release"`) {
+		t.Fatalf("stderr missing duplicate task error:\n%s", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "No tasks configured") {
+		t.Fatalf("invalid config should not render empty task state:\n%s", stdout.String())
+	}
+}
+
+func TestHistoryCommandPrintsRecentRuns(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.AppendHistory(state.Run{ID: "run-1", Task: "release", Kind: "branch", Mode: "direct", Targets: []state.Target{{Branch: "main", Status: state.StatusDone}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendHistory(state.Run{ID: "run-2", Task: "backport", Kind: "commit", Mode: "pr", Targets: []state.Target{{Branch: "release/1.0", Status: state.StatusConflict}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"history"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"run-2", "backport", "conflict 1", "run-1", "release", "done 1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestRunLastUsesMostRecentTaskHistory(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+	if err := os.WriteFile(filepath.Join(repo.Dir, ".git-spread.yml"), []byte(`
+version: 1
+defaults:
+  remote: "."
+tasks:
+  release:
+    type: branch
+    from: develop
+    to:
+      - main
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.AppendHistory(state.Run{ID: "old", Task: "release", Kind: "branch", Mode: "direct", Targets: []state.Target{{Branch: "main", Status: state.StatusDone}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"run", "--last", "--no-tui"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Run ") || !strings.Contains(stdout.String(), "done") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "main", "feature.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetryUsesLastFailedTargets(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+	if err := os.WriteFile(filepath.Join(repo.Dir, ".git-spread.yml"), []byte(`
+version: 1
+defaults:
+  remote: "."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.AppendHistory(state.Run{
+		ID:           "failed",
+		Kind:         "branch",
+		Mode:         "direct",
+		Source:       "develop",
+		Remote:       ".",
+		WorkspaceDir: ".spread",
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusFailed},
+			{Branch: "release/1.0", Status: state.StatusDone},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"retry", "--no-tui"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "main", "feature.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "release-1.0", "feature.txt")); !os.IsNotExist(err) {
+		t.Fatalf("release target should not be retried, err=%v", err)
+	}
+}
+
+func TestDoctorCommandReportsFindings(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.Save(state.Run{
+		ID:            "run-1",
+		CurrentTarget: 0,
+		Targets: []state.Target{
+			{Branch: "main", Status: state.StatusConflict, WorkspacePath: ".spread/main"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"doctor"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "workspace is missing: .spread/main") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestResetTargetRemovesTargetAndWorktree(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	workspace := filepath.Join(repo.Dir, ".spread", "release-1.0")
+	if err := git.NewRunner(repo.Dir).Run("worktree", "add", "-B", "release/1.0", workspace, "release/1.0"); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if err := store.Save(state.Run{
+		ID:            "run-1",
+		CurrentTarget: 0,
+		Targets: []state.Target{
+			{Branch: "release/1.0", Status: state.StatusFailed, WorkspacePath: ".spread/release-1.0"},
+			{Branch: "main", Status: state.StatusPending, WorkspacePath: ".spread/main"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo.Dir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"reset", "--target", "release/1.0", "--clean-worktree"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	run, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Targets) != 1 || run.Targets[0].Branch != "main" {
+		t.Fatalf("run targets = %#v", run.Targets)
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace should be removed, err=%v", err)
 	}
 }
 

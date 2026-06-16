@@ -79,3 +79,29 @@ func TestNormalizeTaskAppliesTaskDefaults(t *testing.T) {
 		t.Fatalf("request = %#v", req)
 	}
 }
+
+func TestNormalizeAppliesGitHubPRDefaults(t *testing.T) {
+	cfg := config.Config{
+		Defaults: config.Defaults{
+			Remote:       ".",
+			WorkspaceDir: ".spread",
+			GitHub: config.GitHubDefaults{
+				PRTitle:   "Backport {source} to {target}",
+				PRBody:    "Body for {target}",
+				Draft:     true,
+				Labels:    []string{"backport"},
+				Reviewers: []string{"octocat"},
+			},
+		},
+	}
+	req, err := Normalize(CLIInput{Kind: KindCommit, Items: []string{"abc123"}, Targets: []string{"release/1.0"}, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.PRTitle != "Backport {source} to {target}" || req.PRBody != "Body for {target}" || !req.PRDraft {
+		t.Fatalf("request = %#v", req)
+	}
+	if len(req.PRLabels) != 1 || req.PRLabels[0] != "backport" || len(req.PRReviewers) != 1 || req.PRReviewers[0] != "octocat" {
+		t.Fatalf("request = %#v", req)
+	}
+}

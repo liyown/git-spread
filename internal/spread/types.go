@@ -31,11 +31,14 @@ type CLIInput struct {
 	Targets       []string
 	Mode          string
 	Task          string
+	Last          bool
+	Retry         bool
 	CurrentBranch string
 	Config        config.Config
 }
 
 type Request struct {
+	Task          string
 	Kind          Kind
 	Source        string
 	Items         []string
@@ -49,4 +52,9 @@ type Request struct {
 	ForkRemote    string
 	HeadRemote    string
 	HeadOwner     string
+	PRTitle       string
+	PRBody        string
+	PRDraft       bool
+	PRLabels      []string
+	PRReviewers   []string
 }

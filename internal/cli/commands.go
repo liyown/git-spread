@@ -24,18 +24,24 @@ import (
 var Version = "dev"
 
 type app struct {
-	Init     initCmd     `cmd:"" help:"Create a .git-spread.yml config."`
-	Run      runCmd      `cmd:"" help:"Run a configured task."`
-	Plan     planCmd     `cmd:"" help:"Show what Git Spread would do."`
-	Branch   branchCmd   `cmd:"" help:"Propagate a branch."`
-	Commit   commitCmd   `cmd:"" help:"Propagate explicit commits or ranges."`
-	PR       prCmd       `cmd:"pr" help:"Propagate a pull request."`
-	Status   statusCmd   `cmd:"" help:"Show active run state."`
-	Open     openCmd     `cmd:"" help:"Open the current conflicted workspace."`
-	Continue continueCmd `cmd:"" help:"Continue a paused run."`
-	Abort    abortCmd    `cmd:"" help:"Abort the active run."`
-	Reset    resetCmd    `cmd:"" help:"Reset Git Spread state without deleting workspaces."`
-	NoTUI    bool        `help:"Disable interactive TUI."`
+	Init       initCmd       `cmd:"" help:"Create a .git-spread.yml config."`
+	Run        runCmd        `cmd:"" help:"Run a configured task."`
+	Plan       planCmd       `cmd:"" help:"Show what Git Spread would do."`
+	Branch     branchCmd     `cmd:"" help:"Propagate a branch."`
+	Commit     commitCmd     `cmd:"" help:"Propagate explicit commits or ranges."`
+	PR         prCmd         `cmd:"pr" help:"Propagate a pull request."`
+	Status     statusCmd     `cmd:"" help:"Show active run state."`
+	Open       openCmd       `cmd:"" help:"Open the current conflicted workspace."`
+	Continue   continueCmd   `cmd:"" help:"Continue a paused run."`
+	Abort      abortCmd      `cmd:"" help:"Abort the active run."`
+	Reset      resetCmd      `cmd:"" help:"Reset Git Spread state without deleting workspaces."`
+	History    historyCmd    `cmd:"" help:"Show recent Git Spread runs."`
+	Retry      retryCmd      `cmd:"" help:"Retry failed targets from the active or latest run."`
+	Doctor     doctorCmd     `cmd:"" help:"Inspect Git Spread state and workspaces."`
+	Examples   examplesCmd   `cmd:"" help:"Show common Git Spread workflows."`
+	Completion completionCmd `cmd:"" help:"Print shell completion script."`
+	Update     updateCmd     `cmd:"" help:"Print the online update command."`
+	NoTUI      bool          `help:"Disable interactive TUI."`
 }
 
 type initCmd struct {
@@ -43,8 +49,9 @@ type initCmd struct {
 }
 
 type runCmd struct {
-	Task  string `arg:"" help:"Configured task name."`
+	Task  string `arg:"" optional:"" help:"Configured task name."`
 	Mode  string `help:"Override execution mode."`
+	Last  bool   `help:"Run the most recent task from history."`
 	NoTUI bool   `help:"Disable interactive TUI."`
 }
 
@@ -91,22 +98,51 @@ type continueCmd struct{}
 
 type abortCmd struct{}
 
-type resetCmd struct{}
+type resetCmd struct {
+	Target        string `help:"Remove one target from the active run."`
+	CleanWorktree bool   `help:"Remove the target isolated worktree when used with --target."`
+}
+
+type historyCmd struct {
+	Limit int `default:"10" help:"Maximum number of history entries to show."`
+}
+
+type retryCmd struct {
+	NoTUI bool `help:"Disable interactive TUI."`
+}
+
+type doctorCmd struct{}
+
+type examplesCmd struct{}
+
+type completionCmd struct {
+	Shell string `arg:"" enum:"bash,zsh,fish" help:"Shell to generate completion for."`
+}
+
+type updateCmd struct{}
 
 const configTemplate = `version: 1
 
 defaults:
+  # mode: direct, pr
   mode: direct
+  # remote: origin, ., or another git remote
   remote: origin
+  # workspace: isolated, current
   workspace: isolated
+  # workspaceDir: relative path for isolated worktrees
   workspaceDir: .spread
+  # editor: auto, code, idea, cursor
   editor: auto
   github:
+    # collaboration: auto, shared, fork
     collaboration: auto
+    # forkRemote: any git remote name that points to your fork
     forkRemote: fork
 
 tasks:
   release:
+    # type: branch, commit, pr
     type: branch
     from: develop
     to:
@@ -159,6 +195,10 @@ func handleNonPropagation(command string, cli app, stdout io.Writer, stderr io.W
 			fmt.Fprintln(stderr, err)
 			return 1, true
 		}
+		if err := ensureSpreadIgnored(".gitignore"); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1, true
+		}
 		fmt.Fprintln(stdout, "created .git-spread.yml")
 		return 0, true
 	case "status":
@@ -170,10 +210,52 @@ func handleNonPropagation(command string, cli app, stdout io.Writer, stderr io.W
 	case "abort":
 		return abortRun(stdout, stderr), true
 	case "reset":
-		return resetRun(stdout, stderr), true
+		return resetRun(cli.Reset, stdout, stderr), true
+	case "history":
+		return printHistory(cli.History, stdout, stderr), true
+	case "doctor":
+		return printDoctor(stdout, stderr), true
+	case "examples":
+		printExamples(stdout)
+		return 0, true
+	case "completion <shell>":
+		return printCompletion(cli.Completion, stdout), true
+	case "update":
+		printUpdate(stdout)
+		return 0, true
 	default:
 		return 0, false
 	}
+}
+
+func ensureSpreadIgnored(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.WriteFile(path, []byte(".spread\n"), 0o644)
+		}
+		return err
+	}
+	if gitignoreHasSpread(data) {
+		return nil
+	}
+	updated := append([]byte(nil), data...)
+	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+		updated = append(updated, '\n')
+	}
+	updated = append(updated, []byte(".spread\n")...)
+	return os.WriteFile(path, updated, 0o644)
+}
+
+func gitignoreHasSpread(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		beforeComment, _, _ := strings.Cut(line, "#")
+		switch strings.TrimSpace(beforeComment) {
+		case ".spread", ".spread/", "/.spread", "/.spread/":
+			return true
+		}
+	}
+	return false
 }
 
 func inputFromContext(command string, cli app) (spread.CLIInput, bool, error) {
@@ -188,7 +270,9 @@ func inputFromContext(command string, cli app) (spread.CLIInput, bool, error) {
 	case strings.HasPrefix(command, "plan pr"):
 		return prInput(cli.Plan.PR), true, nil
 	case strings.HasPrefix(command, "run"):
-		return spread.CLIInput{Task: cli.Run.Task, Mode: cli.Run.Mode}, false, nil
+		return spread.CLIInput{Task: cli.Run.Task, Mode: cli.Run.Mode, Last: cli.Run.Last}, false, nil
+	case strings.HasPrefix(command, "retry"):
+		return spread.CLIInput{Retry: true}, false, nil
 	case strings.HasPrefix(command, "branch"):
 		return branchInput(cli.Branch), false, nil
 	case strings.HasPrefix(command, "commit"):
@@ -222,6 +306,23 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if input.Last {
+		task, err := lastHistoryTask(ctx.store)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		input.Task = task
+		input.Last = false
+	}
+	if input.Retry {
+		retryInput, err := retryInputFromState(ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		input = retryInput
+	}
 	plan, run, err := prepareAndMaybeExecute(ctx, input, planOnly)
 	if err != nil {
 		if errors.Is(err, errInvalidInput) {
@@ -237,6 +338,62 @@ func runPropagation(input spread.CLIInput, planOnly bool, stdout io.Writer, stde
 	}
 	printRun(stdout, run)
 	return 0
+}
+
+func lastHistoryTask(store state.Store) (string, error) {
+	entries, err := store.History(20)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if entry.Run.Task != "" {
+			return entry.Run.Task, nil
+		}
+	}
+	return "", errors.New("no task history found")
+}
+
+func retryInputFromState(ctx repoContext) (spread.CLIInput, error) {
+	run, err := ctx.store.Load()
+	if errors.Is(err, os.ErrNotExist) {
+		entries, historyErr := ctx.store.History(1)
+		if historyErr != nil {
+			return spread.CLIInput{}, historyErr
+		}
+		if len(entries) == 0 {
+			return spread.CLIInput{}, errors.New("no active run or history to retry")
+		}
+		run = entries[0].Run
+	} else if err != nil {
+		return spread.CLIInput{}, err
+	}
+
+	targets := retryTargets(run)
+	if len(targets) == 0 {
+		return spread.CLIInput{}, errors.New("no failed, conflicted, rejected, or blocked targets to retry")
+	}
+	items := append([]string(nil), run.Items...)
+	if len(items) == 0 {
+		items = append([]string(nil), run.Commits...)
+	}
+	return spread.CLIInput{
+		Kind:    spread.Kind(run.Kind),
+		Source:  run.Source,
+		Items:   items,
+		Targets: targets,
+		Mode:    run.Mode,
+	}, nil
+}
+
+func retryTargets(run state.Run) []string {
+	var targets []string
+	for _, target := range run.Targets {
+		switch target.Status {
+		case state.StatusBlocked, state.StatusConflict, state.StatusFailed, state.StatusRejected:
+			targets = append(targets, target.Branch)
+		}
+	}
+	return targets
 }
 
 var errInvalidInput = errors.New("invalid input")
@@ -369,8 +526,10 @@ func loadRepoContext() (repoContext, error) {
 	cfg := config.Config{}
 	if loaded, err := config.LoadFile(filepath.Join(root, ".git-spread.yml")); err == nil {
 		cfg = loaded
-	} else {
+	} else if errors.Is(err, os.ErrNotExist) {
 		config.ApplyDefaults(&cfg)
+	} else {
+		return repoContext{}, err
 	}
 	return repoContext{
 		root:          root,
@@ -400,6 +559,94 @@ func printRun(stdout io.Writer, run state.Run) {
 	for _, target := range run.Targets {
 		fmt.Fprintf(stdout, "  %-10s %s\n", target.Status, target.Branch)
 	}
+}
+
+func printHistory(cmd historyCmd, stdout io.Writer, stderr io.Writer) int {
+	ctx, err := loadRepoContext()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	entries, err := ctx.store.History(cmd.Limit)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(stdout, "No Git Spread history.")
+		return 0
+	}
+	fmt.Fprintln(stdout, "History")
+	for _, entry := range entries {
+		run := entry.Run
+		label := run.Task
+		if label == "" {
+			label = stringOrDash(run.Kind)
+		}
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s\n", run.ID, label, stringOrDash(run.Mode), historySummary(entry.Summary))
+	}
+	return 0
+}
+
+func printExamples(stdout io.Writer) {
+	fmt.Fprintln(stdout, `Examples
+  git spread
+  git spread branch develop --to release/1.0,main
+  git spread commit abc123 --to release/1.0 --mode pr
+  git spread pr 123 --to release/*
+  git spread history
+  git spread run --last
+  git spread retry
+  git spread doctor
+  git spread reset --target release/1.0 --clean-worktree`)
+}
+
+func printCompletion(cmd completionCmd, stdout io.Writer) int {
+	commands := "init run plan branch commit pr status open continue abort reset history retry doctor examples completion update"
+	switch cmd.Shell {
+	case "zsh":
+		fmt.Fprintf(stdout, "#compdef git-spread\n_arguments '1:command:(%s)'\n", commands)
+	case "bash":
+		fmt.Fprintf(stdout, "complete -W %q git-spread\n", commands)
+	case "fish":
+		for _, command := range strings.Fields(commands) {
+			fmt.Fprintf(stdout, "complete -c git-spread -f -a %s\n", command)
+		}
+	}
+	return 0
+}
+
+func printUpdate(stdout io.Writer) {
+	fmt.Fprintln(stdout, "curl -fsSL https://raw.githubusercontent.com/liyown/git-spread/main/scripts/install.sh | sh")
+}
+
+func historySummary(summary map[state.Status]int) string {
+	ordered := []state.Status{
+		state.StatusDone,
+		state.StatusRunning,
+		state.StatusConflict,
+		state.StatusBlocked,
+		state.StatusRejected,
+		state.StatusFailed,
+		state.StatusPending,
+	}
+	var parts []string
+	for _, status := range ordered {
+		if summary[status] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", status, summary[status]))
+		}
+	}
+	if len(parts) == 0 {
+		return "no targets"
+	}
+	return strings.Join(parts, "  ")
+}
+
+func stringOrDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func renderActiveRun(stdout io.Writer, stderr io.Writer) int {
@@ -454,11 +701,13 @@ func taskItemsFromConfig(cfg config.Config) []tui.TaskItem {
 			mode = cfg.Defaults.Mode
 		}
 		items = append(items, tui.TaskItem{
-			Name:    name,
-			Kind:    task.Type,
-			Source:  task.From,
-			Targets: append([]string(nil), task.To...),
-			Mode:    mode,
+			Name:        name,
+			Kind:        task.Type,
+			Description: task.Description,
+			Group:       task.Group,
+			Source:      task.From,
+			Targets:     append([]string(nil), task.To...),
+			Mode:        mode,
 		})
 	}
 	return items
@@ -477,7 +726,7 @@ func taskActionHandler(ctx repoContext, tasks []tui.TaskItem) tui.ActionHandler 
 				return run, "", err
 			}
 			return run, "started task " + task.Name, nil
-		case tui.ActionPlanTask:
+		case tui.ActionPlanTask, tui.ActionPrepareTask:
 			plan, _, err := prepareAndMaybeExecute(ctx, spread.CLIInput{Task: task.Name}, true)
 			if err != nil {
 				return state.Run{}, "", err
@@ -686,17 +935,102 @@ func abortRun(stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func resetRun(stdout io.Writer, stderr io.Writer) int {
+func resetRun(cmd resetCmd, stdout io.Writer, stderr io.Writer) int {
 	ctx, err := loadRepoContext()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if cmd.Target != "" {
+		return resetTarget(ctx, cmd, stdout, stderr)
 	}
 	if err := spread.Abort(ctx.store); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	fmt.Fprintln(stdout, "reset Git Spread state")
+	return 0
+}
+
+func resetTarget(ctx repoContext, cmd resetCmd, stdout io.Writer, stderr io.Writer) int {
+	run, err := ctx.store.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	index := -1
+	var removed state.Target
+	for i, target := range run.Targets {
+		if target.Branch == cmd.Target {
+			index = i
+			removed = target
+			break
+		}
+	}
+	if index < 0 {
+		fmt.Fprintf(stderr, "target %q not found in active run\n", cmd.Target)
+		return 1
+	}
+	if cmd.CleanWorktree && removed.WorkspacePath != "" {
+		workspace := filepath.Join(ctx.root, removed.WorkspacePath)
+		if _, err := os.Stat(workspace); err == nil {
+			if err := ctx.git.Run("worktree", "remove", "--force", workspace); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	run.Targets = append(run.Targets[:index], run.Targets[index+1:]...)
+	if len(run.Targets) == 0 {
+		if err := spread.Abort(ctx.store); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "reset target %s and cleared active run\n", cmd.Target)
+		return 0
+	}
+	if run.CurrentTarget >= len(run.Targets) {
+		run.CurrentTarget = len(run.Targets) - 1
+	}
+	if err := ctx.store.Save(run); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "reset target %s\n", cmd.Target)
+	return 0
+}
+
+func printDoctor(stdout io.Writer, stderr io.Writer) int {
+	ctx, err := loadRepoContext()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	run, err := ctx.store.Load()
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(stdout, "Doctor\n  no active run")
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(stdout, "Doctor")
+		fmt.Fprintln(stdout, "  state is corrupted")
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Run:")
+		fmt.Fprintln(stdout, "  git-spread reset")
+		return 0
+	}
+	findings := spread.Doctor(ctx.git, run)
+	fmt.Fprintln(stdout, "Doctor")
+	if len(findings) == 0 {
+		fmt.Fprintln(stdout, "  no issues found")
+		return 0
+	}
+	for _, finding := range findings {
+		fmt.Fprintf(stdout, "  - %s\n", finding.Message)
+	}
 	return 0
 }
 
