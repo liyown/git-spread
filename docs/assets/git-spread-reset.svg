@@ -5,10 +5,10 @@
   <circle cx="108" cy="72" r="8" fill="#ffbd2e"/>
   <circle cx="138" cy="72" r="8" fill="#28c840"/>
   <text x="72" y="138" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">$ git spread status</text>
-  <text x="72" y="196" fill="#b9dcff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="27" font-weight="700">State needs reset</text>
+  <text x="72" y="196" fill="#b9dcff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="27" font-weight="700">Doctor</text>
   <text x="72" y="248" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Why paused:</text>
-  <text x="104" y="286" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">state is corrupted</text>
+  <text x="104" y="286" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">workspace is missing: .spread/release-1.0</text>
   <text x="72" y="346" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Next action:</text>
-  <text x="104" y="386" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">git spread reset</text>
-  <text x="72" y="444" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">Resets .git/spread/state.json only. Workspaces and user changes stay untouched.</text>
+  <text x="104" y="386" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">git spread reset --target release/1.0 --clean-worktree</text>
+  <text x="72" y="444" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">Use git spread doctor first, then reset only the affected target when possible.</text>
 </svg>

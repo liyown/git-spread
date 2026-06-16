@@ -1,6 +1,8 @@
 package spread
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,6 +32,38 @@ func TestExecuteCommitDirectCherryPicksCommit(t *testing.T) {
 	}
 	if run.Targets[0].Status != state.StatusDone {
 		t.Fatalf("status = %q, want done", run.Targets[0].Status)
+	}
+}
+
+func TestExecuteCommitDirectSkipsAlreadyAppliedCommit(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	repo.Checkout("-b", "feature/login-fix")
+	repo.Write("fix.txt", "fix\n")
+	repo.Commit("fix login")
+	commit := repo.Head()
+
+	req := Request{Kind: KindCommit, Items: []string{commit}, Targets: []string{"release/1.0"}, Mode: ModeDirect, Remote: ".", Workspace: WorkspaceIsolated, WorkspaceDir: ".spread"}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if _, err := Execute(plan, git.NewRunner(repo.Dir), store); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := Execute(plan, git.NewRunner(repo.Dir), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Targets[0].Status != state.StatusDone {
+		t.Fatalf("status = %q, want done", run.Targets[0].Status)
+	}
+	if _, err := store.Load(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active run should be cleared after repeat completion, err = %v", err)
 	}
 }
 

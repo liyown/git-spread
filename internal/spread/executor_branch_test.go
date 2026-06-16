@@ -59,6 +59,46 @@ func TestExecuteBranchDirectMergesIntoTargetWorkspace(t *testing.T) {
 	}
 }
 
+func TestExecuteRecordsRunHistory(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+
+	req := Request{
+		Task:         "release",
+		Kind:         KindBranch,
+		Source:       "develop",
+		Targets:      []string{"release/1.0"},
+		Mode:         ModeDirect,
+		Remote:       ".",
+		Workspace:    WorkspaceIsolated,
+		WorkspaceDir: ".spread",
+	}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if _, err := Execute(plan, git.NewRunner(repo.Dir), store); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.History(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("history entries = %d, want 1", len(entries))
+	}
+	if entries[0].Run.Task != "release" || entries[0].Summary[state.StatusDone] != 1 {
+		t.Fatalf("history entry = %#v", entries[0])
+	}
+}
+
 func TestExecuteReportsProgressSteps(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.Write("README.md", "base\n")
@@ -201,6 +241,42 @@ func TestExecuteBranchDirectReusesExistingTargetWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo.Dir, ".spread", "release-1.0", "feature-two.txt")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecuteBranchDirectCanRepeatAlreadyMergedSource(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	repo.Checkout("-b", "develop")
+	repo.Write("feature.txt", "feature\n")
+	repo.Commit("add feature")
+
+	req := Request{
+		Kind:         KindBranch,
+		Source:       "develop",
+		Targets:      []string{"release/1.0"},
+		Mode:         ModeDirect,
+		Remote:       ".",
+		Workspace:    WorkspaceIsolated,
+		WorkspaceDir: ".spread",
+	}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := state.NewStore(filepath.Join(repo.Dir, ".git", "spread"))
+	if _, err := Execute(plan, git.NewRunner(repo.Dir), store); err != nil {
+		t.Fatal(err)
+	}
+	run, err := Execute(plan, git.NewRunner(repo.Dir), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Targets[0].Status != state.StatusDone {
+		t.Fatalf("status = %q, want done", run.Targets[0].Status)
 	}
 }
 

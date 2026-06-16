@@ -16,6 +16,8 @@ const (
 	rightWidth      = 46
 	detailMaxLines  = 18
 	messageMaxLines = 6
+
+	taskListPageSize = 2
 )
 
 var (
@@ -54,6 +56,7 @@ const (
 	ActionReset         Action = "reset"
 	ActionRunTask       Action = "run-task"
 	ActionPlanTask      Action = "plan-task"
+	ActionPrepareTask   Action = "prepare-task"
 )
 
 type ProgressReporter interface {
@@ -65,16 +68,19 @@ type ActionHandler func(Action, int, ProgressReporter) (state.Run, string, error
 type Screen string
 
 const (
-	ScreenRun   Screen = "run"
-	ScreenTasks Screen = "tasks"
+	ScreenRun     Screen = "run"
+	ScreenTasks   Screen = "tasks"
+	ScreenConfirm Screen = "confirm"
 )
 
 type TaskItem struct {
-	Name    string
-	Kind    string
-	Source  string
-	Targets []string
-	Mode    string
+	Name        string
+	Kind        string
+	Description string
+	Group       string
+	Source      string
+	Targets     []string
+	Mode        string
 }
 
 type Model struct {
@@ -87,23 +93,27 @@ type Model struct {
 	handler      ActionHandler
 	progress     <-chan tea.Msg
 	LastAction   Action
+	searching    bool
+	search       string
+	plan         string
+	confirmTask  int
 	detailOffset int
 }
 
 func NewModel(run state.Run) Model {
-	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run)}
+	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run), confirmTask: -1}
 }
 
 func NewModelWithHandler(run state.Run, handler ActionHandler) Model {
-	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run), handler: handler}
+	return Model{run: run, screen: ScreenRun, cursor: initialTargetCursor(run), handler: handler, confirmTask: -1}
 }
 
 func NewTaskModel(tasks []TaskItem) Model {
-	return Model{tasks: tasks, screen: ScreenTasks}
+	return Model{tasks: tasks, screen: ScreenTasks, confirmTask: -1}
 }
 
 func NewTaskModelWithHandler(tasks []TaskItem, handler ActionHandler) Model {
-	return Model{tasks: tasks, screen: ScreenTasks, handler: handler}
+	return Model{tasks: tasks, screen: ScreenTasks, handler: handler, confirmTask: -1}
 }
 
 func Run(run state.Run) error {
@@ -139,23 +149,52 @@ type progressEventMsg struct {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if m.screen == ScreenTasks && m.searching {
+			return m.updateTaskSearch(msg), nil
+		}
+		if m.screen == ScreenConfirm {
+			return m.updateConfirm(msg)
+		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 		case "j", "down":
-			if m.cursor < m.itemCount()-1 {
+			if m.screen == ScreenTasks {
+				m.moveTaskCursor(1)
+			} else if m.cursor < m.itemCount()-1 {
 				m.cursor++
 				m.detailOffset = 0
 			}
 		case "k", "up":
-			if m.cursor > 0 {
+			if m.screen == ScreenTasks {
+				m.moveTaskCursor(-1)
+			} else if m.cursor > 0 {
 				m.cursor--
 				m.detailOffset = 0
 			}
+		case "g":
+			if m.screen == ScreenTasks {
+				m.jumpTaskCursor(false)
+			}
+		case "G":
+			if m.screen == ScreenTasks {
+				m.jumpTaskCursor(true)
+			}
+		case "/":
+			if m.screen == ScreenTasks {
+				m.searching = true
+				m.search = ""
+				m.alignTaskCursor()
+			}
+		case "esc":
+			return m, nil
 		case "o", "enter":
 			if m.screen == ScreenTasks {
-				m.LastAction = ActionRunTask
-				return m.startAction(ActionRunTask)
+				m.LastAction = ActionPrepareTask
+				return m.startAction(ActionPrepareTask)
 			}
 			m.LastAction = ActionOpenWorkspace
 			return m.startAction(ActionOpenWorkspace)
@@ -203,13 +242,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processing = false
 		m.progress = nil
 		if msg.err != nil {
+			if len(msg.run.Targets) > 0 {
+				m.run = msg.run
+				m.screen = ScreenRun
+				m.cursor = clampCursor(m.cursor, len(m.run.Targets))
+				m.plan = ""
+				m.confirmTask = -1
+				m.detailOffset = 0
+			}
 			m.message = msg.err.Error()
 			return m, nil
 		}
-		if len(msg.run.Targets) > 0 || m.screen == ScreenRun {
+		if m.LastAction == ActionPrepareTask {
+			m.plan = msg.message
+			m.message = ""
+			m.confirmTask = m.selectedTaskIndex()
+			m.screen = ScreenConfirm
+			return m, nil
+		}
+		if runComplete(msg.run) && len(m.tasks) > 0 {
+			m.run = msg.run
+			m.screen = ScreenTasks
+			m.cursor = clampCursor(m.cursor, len(m.tasks))
+			m.plan = ""
+			m.confirmTask = -1
+		} else if len(msg.run.Targets) > 0 || m.screen == ScreenRun {
 			m.run = msg.run
 			m.screen = ScreenRun
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
+			m.plan = ""
+			m.confirmTask = -1
 			m.detailOffset = 0
 		}
 		m.message = msg.message
@@ -221,6 +283,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.run = msg.run
 			m.screen = ScreenRun
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
+			m.plan = ""
+			m.confirmTask = -1
 			m.detailOffset = 0
 			if msg.message != "" {
 				m.message = msg.message
@@ -233,6 +297,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenTasks
+		m.plan = ""
+		m.message = ""
+		m.confirmTask = -1
+		return m, nil
+	case "enter":
+		m.LastAction = ActionRunTask
+		return m.startAction(ActionRunTask)
+	default:
+		return m, nil
+	}
 }
 
 func (m Model) startAction(action Action) (tea.Model, tea.Cmd) {
@@ -253,6 +335,8 @@ func workingMessage(action Action) string {
 		return "Starting selected task..."
 	case ActionPlanTask:
 		return "Rendering execution plan..."
+	case ActionPrepareTask:
+		return "Preparing run confirmation..."
 	case ActionOpenWorkspace:
 		return "Opening workspace in editor..."
 	case ActionRefresh:
@@ -275,6 +359,16 @@ func (m Model) runAction(action Action, progress chan tea.Msg) tea.Cmd {
 		return nil
 	}
 	cursor := m.cursor
+	switch action {
+	case ActionRunTask:
+		if m.screen == ScreenConfirm && m.confirmTask >= 0 && m.confirmTask < len(m.tasks) {
+			cursor = m.confirmTask
+		} else {
+			cursor = m.selectedTaskIndex()
+		}
+	case ActionPlanTask, ActionPrepareTask:
+		cursor = m.selectedTaskIndex()
+	}
 	return func() tea.Msg {
 		defer close(progress)
 		run, message, err := m.handler(action, cursor, progressReporter{ch: progress})
@@ -309,6 +403,123 @@ func (m Model) waitForProgress() tea.Cmd {
 	}
 }
 
+func (m Model) updateTaskSearch(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "enter":
+		m.searching = false
+	case "esc":
+		m.searching = false
+		m.search = ""
+	case "backspace":
+		runes := []rune(m.search)
+		if len(runes) > 0 {
+			m.search = string(runes[:len(runes)-1])
+		}
+	default:
+		text := msg.String()
+		if len([]rune(text)) == 1 {
+			m.search += text
+		}
+	}
+	m.alignTaskCursor()
+	return m
+}
+
+func (m *Model) moveTaskCursor(delta int) {
+	indices := m.taskIndices()
+	if len(indices) == 0 {
+		return
+	}
+	pos := m.taskCursorPosition(indices)
+	pos += delta
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= len(indices) {
+		pos = len(indices) - 1
+	}
+	m.cursor = indices[pos]
+}
+
+func (m *Model) jumpTaskCursor(last bool) {
+	indices := m.taskIndices()
+	if len(indices) == 0 {
+		return
+	}
+	if last {
+		m.cursor = indices[len(indices)-1]
+		return
+	}
+	m.cursor = indices[0]
+}
+
+func (m *Model) alignTaskCursor() {
+	indices := m.taskIndices()
+	if len(indices) == 0 {
+		m.cursor = 0
+		return
+	}
+	for _, index := range indices {
+		if index == m.cursor {
+			return
+		}
+	}
+	m.cursor = indices[0]
+}
+
+func (m Model) taskCursorPosition(indices []int) int {
+	for i, index := range indices {
+		if index == m.cursor {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) selectedTaskIndex() int {
+	indices := m.taskIndices()
+	if len(indices) == 0 {
+		return -1
+	}
+	for _, index := range indices {
+		if index == m.cursor {
+			return index
+		}
+	}
+	return indices[0]
+}
+
+func (m Model) previewTaskIndex() int {
+	if m.screen == ScreenConfirm && m.confirmTask >= 0 && m.confirmTask < len(m.tasks) {
+		return m.confirmTask
+	}
+	return m.selectedTaskIndex()
+}
+
+func (m Model) taskIndices() []int {
+	query := strings.ToLower(strings.TrimSpace(m.search))
+	indices := make([]int, 0, len(m.tasks))
+	for i, task := range m.tasks {
+		if query == "" || taskMatches(task, query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func taskMatches(task TaskItem, query string) bool {
+	fields := []string{
+		task.Name,
+		task.Kind,
+		task.Description,
+		task.Group,
+		task.Source,
+		task.Mode,
+		strings.Join(task.Targets, " "),
+	}
+	return strings.Contains(strings.ToLower(strings.Join(fields, " ")), query)
+}
+
 func currentStepMessage(run state.Run) string {
 	index := initialTargetCursor(run)
 	if index < 0 || index >= len(run.Targets) {
@@ -319,6 +530,18 @@ func currentStepMessage(run state.Run) string {
 		return ""
 	}
 	return target.Branch + ": " + target.Step
+}
+
+func runComplete(run state.Run) bool {
+	if len(run.Targets) == 0 {
+		return false
+	}
+	for _, target := range run.Targets {
+		if target.Status != state.StatusDone {
+			return false
+		}
+	}
+	return true
 }
 
 func (m Model) itemCount() int {
@@ -373,10 +596,14 @@ func initialTargetCursor(run state.Run) int {
 }
 
 func (m Model) View() tea.View {
-	if m.screen == ScreenTasks {
+	switch m.screen {
+	case ScreenTasks:
 		return m.taskView()
+	case ScreenConfirm:
+		return m.confirmView()
+	default:
+		return m.runView()
 	}
-	return m.runView()
 }
 
 func (m Model) taskView() tea.View {
@@ -395,7 +622,7 @@ func (m Model) taskView() tea.View {
 	if m.message != "" {
 		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
 	}
-	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "Enter run   p plan   j/k move   q quit", innerWidth))
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "Enter confirm   p plan   / search   g/G top/bottom   j/k move   q quit", innerWidth))
 	return altView(frameStyle.Width(surfaceWidth).Render(body))
 }
 
@@ -403,7 +630,22 @@ func (m Model) renderTaskOverview() string {
 	if len(m.tasks) == 0 {
 		return "Tasks: 0\nRun git spread init to create .git-spread.yml."
 	}
-	return fmt.Sprintf("Tasks: %d\nSelect a configured propagation, preview it with p, or press Enter to run.", len(m.tasks))
+	indices := m.taskIndices()
+	lines := []string{fmt.Sprintf("Tasks: %d", len(m.tasks))}
+	if m.search != "" || m.searching {
+		lines = append(lines, "Search: "+m.search)
+	}
+	if len(indices) == 0 {
+		lines = append(lines, "Matches: 0")
+		return strings.Join(lines, "\n")
+	}
+	if len(indices) > taskListPageSize {
+		start, end := taskWindow(m.taskCursorPosition(indices), len(indices))
+		lines = append(lines, fmt.Sprintf("Showing %d-%d of %d. Use j/k to move, Enter to confirm.", start+1, end, len(indices)))
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "Select a configured propagation, preview it with p, or press Enter to confirm.")
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderTaskList() string {
@@ -411,44 +653,114 @@ func (m Model) renderTaskList() string {
 	if len(m.tasks) == 0 {
 		return subtleStyle.Render("No tasks configured")
 	}
-	for i, task := range m.tasks {
-		prefix := " "
-		lineStyle := lipgloss.NewStyle()
+	indices := m.taskIndices()
+	if len(indices) == 0 {
+		return subtleStyle.Render("No matching tasks")
+	}
+	start, end := taskWindow(m.taskCursorPosition(indices), len(indices))
+	for pos := start; pos < end; pos++ {
+		i := indices[pos]
+		task := m.tasks[i]
+		prefix := "  "
+		lineStyle := subtleStyle
 		if i == m.cursor {
-			prefix = ">"
+			prefix = "> "
 			lineStyle = focusStyle
 		}
-		fmt.Fprintf(&b, "%s %-12s %-7s %-6s %s\n", prefix, task.Name, valueOrDash(task.Kind), valueOrDash(task.Mode), taskFlow(task))
-		if i == m.cursor {
-			lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
-			lines[len(lines)-1] = lineStyle.Render(lines[len(lines)-1])
-			b.Reset()
-			b.WriteString(strings.Join(lines, "\n"))
+		lines := []string{
+			prefix + taskDisplayName(task),
+			"  type " + valueOrDash(task.Kind) + "  mode " + valueOrDash(task.Mode),
+		}
+		if task.Description != "" {
+			lines = append(lines, "  "+task.Description)
+		}
+		if task.Source != "" {
+			lines = append(lines, "  from "+task.Source)
+		}
+		lines = append(lines, "  targets "+valueOrDash(strings.Join(task.Targets, ", ")))
+		for _, line := range lines {
+			b.WriteString(lineStyle.Render(fitLine(line, leftWidth-4)))
+			b.WriteString("\n")
+		}
+		if pos < end-1 {
 			b.WriteString("\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
+func taskWindow(cursor int, count int) (int, int) {
+	if count <= 0 {
+		return 0, 0
+	}
+	if count <= taskListPageSize {
+		return 0, count
+	}
+	cursor = clampCursor(cursor, count)
+	start := cursor - taskListPageSize + 1
+	if start < 0 {
+		start = 0
+	}
+	if start+taskListPageSize > count {
+		start = count - taskListPageSize
+	}
+	return start, start + taskListPageSize
+}
+
+func taskDisplayName(task TaskItem) string {
+	if task.Group == "" {
+		return valueOrDash(task.Name)
+	}
+	return "[" + task.Group + "] " + valueOrDash(task.Name)
+}
+
 func (m Model) renderTaskPreview() string {
 	if len(m.tasks) == 0 {
 		return subtleStyle.Render("No configured propagations.\nRun git spread init to create .git-spread.yml.\nCreate .git-spread.yml with tasks for repeated flows.")
 	}
-	task := m.tasks[clampCursor(m.cursor, len(m.tasks))]
+	index := m.previewTaskIndex()
+	if index < 0 {
+		return subtleStyle.Render("No tasks match the current search.")
+	}
+	task := m.tasks[index]
 	lines := []string{
 		"Next run:",
 		"  git spread run " + task.Name,
 		"",
 		"Name:    " + task.Name,
-		"Type:    " + valueOrDash(task.Kind),
-		"Mode:    " + valueOrDash(task.Mode),
 	}
+	if task.Group != "" {
+		lines = append(lines, "Group:   "+task.Group)
+	}
+	if task.Description != "" {
+		lines = append(lines, "About:   "+task.Description)
+	}
+	lines = append(lines,
+		"Type:    "+valueOrDash(task.Kind),
+		"Mode:    "+valueOrDash(task.Mode),
+	)
 	lines = append(lines, "Flow:    "+taskFlow(task))
 	if task.Source != "" {
 		lines = append(lines, "Source:  "+task.Source)
 	}
 	lines = append(lines, "Targets: "+strings.Join(task.Targets, ", "))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) confirmView() tea.View {
+	header := titleStyle.Render("Git Spread Control Console") + "  " + subtleStyle.Render("confirm selected propagation")
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		"",
+		panel("Confirm run", m.renderTaskPreview(), innerWidth),
+		"",
+		panel("Execution plan", valueOrDash(m.plan), innerWidth),
+	)
+	if m.message != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
+	}
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "Enter run   Esc back   q quit", innerWidth))
+	return altView(frameStyle.Width(surfaceWidth).Render(body))
 }
 
 func (m Model) runView() tea.View {
@@ -576,7 +888,7 @@ func (m Model) renderTargetDetailsContent() string {
 		lines = append(lines, "", "Current step:", "  "+target.Step)
 	}
 	if len(target.ConflictedFiles) > 0 {
-		lines = append(lines, "", "Conflicts:", "  "+strings.Join(target.ConflictedFiles, ", "))
+		lines = append(lines, "", fmt.Sprintf("Conflicts: %d files", len(target.ConflictedFiles)), "  "+strings.Join(target.ConflictedFiles, ", "))
 	}
 	if target.PullRequestURL != "" {
 		lines = append(lines, "", "Pull request:", "  "+target.PullRequestURL)
@@ -640,6 +952,30 @@ func taskFlow(task TaskItem) string {
 		return task.Source + " -> " + targets
 	}
 	return "-> " + targets
+}
+
+func fitLine(line string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(line) <= maxWidth {
+		return line
+	}
+	if maxWidth <= 3 {
+		return strings.Repeat(".", maxWidth)
+	}
+	limit := maxWidth - 3
+	var b strings.Builder
+	width := 0
+	for _, r := range line {
+		runeWidth := lipgloss.Width(string(r))
+		if width+runeWidth > limit {
+			break
+		}
+		b.WriteRune(r)
+		width += runeWidth
+	}
+	return b.String() + "..."
 }
 
 func valueOrDash(value string) string {

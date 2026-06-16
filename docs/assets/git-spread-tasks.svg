@@ -7,18 +7,15 @@
   <rect x="70" y="116" width="1120" height="96" fill="#11131a" stroke="#6b63ff" stroke-width="2"/>
   <text x="92" y="154" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">Task overview</text>
   <text x="92" y="188" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Tasks: 2</text>
-  <text x="250" y="188" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Select a propagation, preview it with p, or press Enter to run.</text>
+  <text x="250" y="188" fill="#e3e3e3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Select a propagation, search with /, or press Enter to confirm.</text>
 
   <rect x="70" y="246" width="520" height="286" fill="#11131a" stroke="#6b63ff" stroke-width="2"/>
   <text x="92" y="288" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Tasks</text>
-  <text x="92" y="334" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23" font-weight="700">&gt; release</text>
-  <text x="246" y="334" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23" font-weight="700">branch</text>
-  <text x="356" y="334" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23" font-weight="700">direct</text>
-  <text x="92" y="372" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="21">  develop -&gt; release/*, main</text>
-  <text x="92" y="426" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">  backport</text>
-  <text x="246" y="426" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">commit</text>
-  <text x="356" y="426" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">pr</text>
-  <text x="92" y="464" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="21">  -&gt; release/*</text>
+  <text x="92" y="334" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23" font-weight="700">&gt; [release] release</text>
+  <text x="92" y="372" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="21" font-weight="700">  type branch  mode direct</text>
+  <text x="92" y="410" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="21" font-weight="700">  Move develop into release train</text>
+  <text x="92" y="448" fill="#75ff86" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="21" font-weight="700">  targets release/*, main</text>
+  <text x="92" y="502" fill="#d8d8d8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22">  [patch] backport</text>
 
   <rect x="630" y="246" width="560" height="286" fill="#11131a" stroke="#6b63ff" stroke-width="2"/>
   <text x="654" y="288" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="25">Preview</text>
@@ -30,5 +27,5 @@
 
   <rect x="70" y="572" width="1120" height="84" fill="#11131a" stroke="#6b63ff" stroke-width="2"/>
   <text x="92" y="608" fill="#9b9b9b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">Actions</text>
-  <text x="92" y="640" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Enter run    p plan    j/k move    q quit</text>
+  <text x="92" y="640" fill="#8eb7ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="23">Enter confirm    p plan    / search    g/G top/bottom    j/k move    q quit</text>
 </svg>

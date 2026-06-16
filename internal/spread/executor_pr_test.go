@@ -29,7 +29,7 @@ func TestPlanPRUsesGitHubCommits(t *testing.T) {
 
 func TestPRModeCreatesPullRequestPerTarget(t *testing.T) {
 	client := &RecordingClient{}
-	created, err := CreateTargetPR(client, "spread/release-1.0/abc123", "release/1.0", "Propagate changes to release/1.0")
+	created, err := CreateTargetPR(client, Request{Source: "develop", Kind: KindBranch, Mode: ModePR}, "spread/release-1.0/abc123", "release/1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,46 @@ func TestExecuteCommitPRModeCreatesPropagationBranch(t *testing.T) {
 	}
 	if run.Targets[0].CreatedBranch == "" || client.Input.Head != "me:"+run.Targets[0].CreatedBranch {
 		t.Fatalf("run=%#v input=%#v", run, client.Input)
+	}
+}
+
+func TestExecutePRModeUsesConfiguredPRMetadata(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.Write("README.md", "base\n")
+	repo.Commit("initial")
+	repo.Branch("release/1.0")
+	repo.Checkout("-b", "feature/login-fix")
+	repo.Write("fix.txt", "fix\n")
+	repo.Commit("fix login")
+	commit := repo.Head()
+
+	req := Request{
+		Kind:         KindCommit,
+		Source:       "feature/login-fix",
+		Items:        []string{commit},
+		Targets:      []string{"release/1.0"},
+		Mode:         ModePR,
+		Remote:       ".",
+		WorkspaceDir: ".spread",
+		PRTitle:      "Backport {source} to {target}",
+		PRBody:       "Generated for {target}",
+		PRDraft:      true,
+		PRLabels:     []string{"backport"},
+		PRReviewers:  []string{"octocat"},
+	}
+	plan, err := BuildPlan(req, git.NewRunner(repo.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &RecordingClient{}
+	if _, err := ExecuteWithGitHub(plan, git.NewRunner(repo.Dir), state.NewStore(filepath.Join(repo.Dir, ".git", "spread")), client); err != nil {
+		t.Fatal(err)
+	}
+	if client.Input.Title != "Backport feature/login-fix to release/1.0" || client.Input.Body != "Generated for release/1.0" || !client.Input.Draft {
+		t.Fatalf("input = %#v", client.Input)
+	}
+	if len(client.Input.Labels) != 1 || client.Input.Labels[0] != "backport" || len(client.Input.Reviewers) != 1 || client.Input.Reviewers[0] != "octocat" {
+		t.Fatalf("input = %#v", client.Input)
 	}
 }
 

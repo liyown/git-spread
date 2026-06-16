@@ -24,6 +24,7 @@ func Execute(plan Plan, root git.Runner, store state.Store) (state.Run, error) {
 func ExecuteWithProgress(plan Plan, root git.Runner, store state.Store, progress ProgressReporter) (state.Run, error) {
 	run := state.Run{
 		ID:            time.Now().UTC().Format("20060102T150405Z"),
+		Task:          plan.Request.Task,
 		Kind:          string(plan.Request.Kind),
 		Mode:          string(plan.Request.Mode),
 		Source:        plan.Request.Source,
@@ -35,6 +36,11 @@ func ExecuteWithProgress(plan Plan, root git.Runner, store state.Store, progress
 		ForkRemote:    plan.Request.ForkRemote,
 		HeadRemote:    plan.Request.HeadRemote,
 		HeadOwner:     plan.Request.HeadOwner,
+		PRTitle:       plan.Request.PRTitle,
+		PRBody:        plan.Request.PRBody,
+		PRDraft:       plan.Request.PRDraft,
+		PRLabels:      append([]string(nil), plan.Request.PRLabels...),
+		PRReviewers:   append([]string(nil), plan.Request.PRReviewers...),
 	}
 	for _, target := range plan.Targets {
 		run.Targets = append(run.Targets, state.Target{
@@ -46,6 +52,9 @@ func ExecuteWithProgress(plan Plan, root git.Runner, store state.Store, progress
 	if err := store.Save(run); err != nil {
 		return run, err
 	}
+	defer func() {
+		_ = store.AppendHistory(run)
+	}()
 	if err := syncRemoteForRun(plan.Request, root, store, &run, progress); err != nil {
 		return run, err
 	}
@@ -109,6 +118,7 @@ func ExecuteWithGitHubProgress(plan Plan, root git.Runner, store state.Store, cl
 	}
 	run := state.Run{
 		ID:            time.Now().UTC().Format("20060102T150405Z"),
+		Task:          plan.Request.Task,
 		Kind:          string(plan.Request.Kind),
 		Mode:          string(plan.Request.Mode),
 		Source:        plan.Request.Source,
@@ -120,6 +130,11 @@ func ExecuteWithGitHubProgress(plan Plan, root git.Runner, store state.Store, cl
 		ForkRemote:    plan.Request.ForkRemote,
 		HeadRemote:    plan.Request.HeadRemote,
 		HeadOwner:     plan.Request.HeadOwner,
+		PRTitle:       plan.Request.PRTitle,
+		PRBody:        plan.Request.PRBody,
+		PRDraft:       plan.Request.PRDraft,
+		PRLabels:      append([]string(nil), plan.Request.PRLabels...),
+		PRReviewers:   append([]string(nil), plan.Request.PRReviewers...),
 	}
 	for _, target := range plan.Targets {
 		run.Targets = append(run.Targets, state.Target{
@@ -131,6 +146,9 @@ func ExecuteWithGitHubProgress(plan Plan, root git.Runner, store state.Store, cl
 	if err := store.Save(run); err != nil {
 		return run, err
 	}
+	defer func() {
+		_ = store.AppendHistory(run)
+	}()
 	if err := syncRemoteForRun(plan.Request, root, store, &run, progress); err != nil {
 		return run, err
 	}
@@ -191,7 +209,7 @@ func ExecuteWithGitHubProgress(plan Plan, root git.Runner, store state.Store, cl
 		if err := report("create pull request"); err != nil {
 			return run, err
 		}
-		created, err := CreateTargetPR(client, prHead(plan.Request, head), target.Branch, fmt.Sprintf("Propagate changes to %s", target.Branch))
+		created, err := CreateTargetPR(client, plan.Request, prHead(plan.Request, head), target.Branch)
 		if err != nil {
 			setTargetError(&run.Targets[i], state.StatusFailed, err)
 			_ = store.Save(run)
@@ -229,8 +247,7 @@ func executeTarget(plan Plan, target TargetPlan, root git.Runner, report stepRep
 		if err := reportStep(report, "cherry-pick commits"); err != nil {
 			return err
 		}
-		args := append([]string{"cherry-pick"}, plan.Commits...)
-		if err := w.Run(args...); err != nil {
+		if err := cherryPickCommits(w, plan.Commits); err != nil {
 			return err
 		}
 	default:
@@ -248,8 +265,7 @@ func executePropagationBranch(plan Plan, target TargetPlan, head string, root gi
 	if err := reportStep(report, "cherry-pick commits"); err != nil {
 		return err
 	}
-	args := append([]string{"cherry-pick"}, plan.Commits...)
-	return w.Run(args...)
+	return cherryPickCommits(w, plan.Commits)
 }
 
 func ensureWorktree(root git.Runner, branch string, workspace string, startPoint string, report stepReporter) error {
@@ -360,6 +376,27 @@ func refreshWorkspaceBase(w git.Runner, branch string, workspace string, startPo
 		return err
 	}
 	return w.Run("reset", "--hard", startPoint)
+}
+
+func cherryPickCommits(w git.Runner, commits []string) error {
+	for _, commit := range commits {
+		if err := w.Run("cherry-pick", commit); err != nil {
+			if !emptyCherryPick(err) {
+				return err
+			}
+			if skipErr := w.Run("cherry-pick", "--skip"); skipErr != nil {
+				return fmt.Errorf("%v; failed to skip empty cherry-pick: %w", err, skipErr)
+			}
+		}
+	}
+	return nil
+}
+
+func emptyCherryPick(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "previous cherry-pick is now empty")
 }
 
 func aheadCount(r git.Runner, base string, head string) (int, error) {
@@ -515,11 +552,37 @@ func conflictedFiles(r git.Runner) ([]string, error) {
 	return strings.Fields(out), nil
 }
 
-func CreateTargetPR(client gh.Client, head string, base string, title string) (gh.CreatedPullRequest, error) {
+func CreateTargetPR(client gh.Client, req Request, head string, base string) (gh.CreatedPullRequest, error) {
 	return client.CreatePullRequest(gh.CreatePullRequestInput{
-		Title: title,
-		Head:  head,
-		Base:  base,
-		Body:  "Created by Git Spread.",
+		Title:     renderPRTemplate(valueOrDefault(req.PRTitle, "Propagate {source} to {target}"), req, base),
+		Head:      head,
+		Base:      base,
+		Body:      renderPRTemplate(valueOrDefault(req.PRBody, "Created by Git Spread for {target}."), req, base),
+		Draft:     req.PRDraft,
+		Labels:    append([]string(nil), req.PRLabels...),
+		Reviewers: append([]string(nil), req.PRReviewers...),
 	})
+}
+
+func renderPRTemplate(template string, req Request, target string) string {
+	source := req.Source
+	if source == "" && len(req.Items) > 0 {
+		source = strings.Join(req.Items, ", ")
+	}
+	if source == "" && len(req.Targets) > 0 {
+		source = string(req.Kind)
+	}
+	return strings.NewReplacer(
+		"{source}", source,
+		"{target}", target,
+		"{kind}", string(req.Kind),
+		"{mode}", string(req.Mode),
+	).Replace(template)
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }

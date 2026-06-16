@@ -36,6 +36,7 @@ func Normalize(input CLIInput) (Request, error) {
 	}
 
 	req := Request{
+		Task:          input.Task,
 		Kind:          input.Kind,
 		Source:        input.Source,
 		Items:         append([]string(nil), input.Items...),
@@ -47,6 +48,11 @@ func Normalize(input CLIInput) (Request, error) {
 		Editor:        cfg.Defaults.Editor,
 		Collaboration: collaboration,
 		ForkRemote:    cfg.Defaults.GitHub.ForkRemote,
+		PRTitle:       cfg.Defaults.GitHub.PRTitle,
+		PRBody:        cfg.Defaults.GitHub.PRBody,
+		PRDraft:       cfg.Defaults.GitHub.Draft,
+		PRLabels:      append([]string(nil), cfg.Defaults.GitHub.Labels...),
+		PRReviewers:   append([]string(nil), cfg.Defaults.GitHub.Reviewers...),
 	}
 
 	switch req.Kind {

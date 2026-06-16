@@ -46,9 +46,9 @@ It keeps each target in its own isolated workspace under `.spread/`, so your mai
 - Direct mode for applying and pushing target branches
 - PR mode for creating GitHub pull requests
 - Target patterns such as `release/*`
-- TUI task picker and active run panel
+- TUI task picker with search, plan confirmation, and active run panel
 - Editor handoff for conflicts and local workspace issues
-- `continue`, `abort`, and safe `reset` recovery
+- Run history, rerun-last, retry failed targets, doctor, and safe reset recovery
 
 ## Requirements
 
@@ -138,10 +138,17 @@ defaults:
   github:
     collaboration: auto
     forkRemote: fork
+    prTitle: "Propagate {source} to {target}"
+    prBody: "Created by Git Spread for {target}."
+    draft: false
+    labels: []
+    reviewers: []
 
 tasks:
   release:
     type: branch
+    group: release
+    description: Move current branch into release train branches
     from: auto
     to:
       - release/*
@@ -155,6 +162,7 @@ git spread
 ```
 
 Select `release`, press `Enter`, and Git Spread will apply your current branch to every resolved target. Set `from` to a concrete branch name such as `develop` when you do not want current-branch behavior.
+The TUI first shows a confirmation plan; press `Enter` again to execute, or `Esc` to go back.
 
 ## Common Workflows
 
@@ -222,6 +230,40 @@ PR mode:
 git spread commit abc123 --to release/* --mode pr
 ```
 
+PR titles and bodies can use `{source}`, `{target}`, `{kind}`, and `{mode}` placeholders. Labels and reviewers are applied after the PR is created.
+
+```yaml
+defaults:
+  github:
+    prTitle: "Backport {source} to {target}"
+    prBody: "Automated propagation for {target}."
+    draft: true
+    labels:
+      - backport
+    reviewers:
+      - octocat
+```
+
+## History and Retry
+
+List recent runs:
+
+```bash
+git spread history
+```
+
+Run the most recent configured task again:
+
+```bash
+git spread run --last
+```
+
+Retry only failed, conflicted, rejected, or blocked targets from the active run or latest history entry:
+
+```bash
+git spread retry
+```
+
 ## Conflict and Recovery Flow
 
 When a target conflicts, Git Spread pauses and records the target state.
@@ -247,10 +289,17 @@ git spread abort
 If Git Spread itself reports invalid or corrupted local state:
 
 ```bash
+git spread doctor
 git spread reset
 ```
 
 `reset` only removes `.git/spread/state.json`. It does not delete `.spread/` workspaces and does not discard user changes.
+
+Reset one target and optionally remove its isolated worktree:
+
+```bash
+git spread reset --target release/1.0 --clean-worktree
+```
 
 ## TUI Controls
 
@@ -259,7 +308,9 @@ Task screen:
 | Key | Action |
 | --- | --- |
 | `j` / `k` | Move selection |
-| `Enter` | Run selected task |
+| `g` / `G` | Jump to first / last visible task |
+| `/` | Search tasks by name, group, description, source, mode, or target |
+| `Enter` | Confirm selected task, then run from the confirmation screen |
 | `p` | Preview plan |
 | `q` | Quit |
 
@@ -283,15 +334,23 @@ Run screen:
 | `git spread init` | Create `.git-spread.yml` |
 | `git spread init --print` | Print config template |
 | `git spread run <task>` | Run a configured task |
+| `git spread run --last` | Run the most recent configured task from history |
 | `git spread plan run <task>` | Preview a configured task |
 | `git spread branch [source] --to <targets>` | Propagate a branch |
 | `git spread commit <items...> --to <targets>` | Propagate commits or ranges |
 | `git spread pr <number-or-url> --to <targets>` | Propagate pull request commits |
+| `git spread history` | Show recent run history |
+| `git spread retry` | Retry failed targets |
+| `git spread doctor` | Diagnose local state and workspaces |
+| `git spread examples` | Print common workflows |
+| `git spread completion <shell>` | Print shell completion for `bash`, `zsh`, or `fish` |
+| `git spread update` | Print the online update command |
 | `git spread status` | Show active run state |
 | `git spread open` | Open current target workspace |
 | `git spread continue` | Continue after conflict or action-needed state |
 | `git spread abort` | Abort active run |
 | `git spread reset` | Clear invalid Git Spread state only |
+| `git spread reset --target <branch> --clean-worktree` | Remove one target from state and delete its isolated worktree |
 
 Automation can disable interactive UI with `--no-tui`:
 
@@ -315,10 +374,18 @@ defaults:
   github:
     collaboration: auto
     forkRemote: fork
+    prTitle: "Propagate {source} to {target}"
+    prBody: "Created by Git Spread for {target}."
+    draft: false
+    labels:
+      - propagation
+    reviewers: []
 
 tasks:
   release:
     type: branch
+    group: release
+    description: Move current branch into release train branches
     from: auto
     to:
       - release/*
@@ -351,6 +418,7 @@ Git Spread is local-only.
 
 ```text
 .git/spread/state.json   active run state
+.git/spread/history.jsonl recent run history
 .spread/<target>/        isolated target workspace
 ```
 
