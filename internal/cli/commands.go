@@ -144,7 +144,7 @@ tasks:
   release:
     # type: branch, commit, pr
     type: branch
-    from: develop
+    from: auto
     to:
       - release/*
       - main

@@ -131,6 +131,9 @@ jobs:
       - package-windows
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
       - name: Download installers
         uses: actions/download-artifact@v4
         with:
@@ -153,4 +156,5 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
+          body_path: .github/releases/${{ env.RELEASE_VERSION }}.md
           files: dist/*

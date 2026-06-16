@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	surfaceWidth = 96
-	innerWidth   = 90
-	leftWidth    = 42
-	rightWidth   = 46
+	surfaceWidth    = 96
+	innerWidth      = 90
+	leftWidth       = 42
+	rightWidth      = 46
+	detailMaxLines  = 18
+	messageMaxLines = 6
 
 	taskListPageSize = 2
 )
@@ -82,19 +84,20 @@ type TaskItem struct {
 }
 
 type Model struct {
-	run         state.Run
-	tasks       []TaskItem
-	screen      Screen
-	cursor      int
-	message     string
-	processing  bool
-	handler     ActionHandler
-	progress    <-chan tea.Msg
-	LastAction  Action
-	searching   bool
-	search      string
-	plan        string
-	confirmTask int
+	run          state.Run
+	tasks        []TaskItem
+	screen       Screen
+	cursor       int
+	message      string
+	processing   bool
+	handler      ActionHandler
+	progress     <-chan tea.Msg
+	LastAction   Action
+	searching    bool
+	search       string
+	plan         string
+	confirmTask  int
+	detailOffset int
 }
 
 func NewModel(run state.Run) Model {
@@ -163,12 +166,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveTaskCursor(1)
 			} else if m.cursor < m.itemCount()-1 {
 				m.cursor++
+				m.detailOffset = 0
 			}
 		case "k", "up":
 			if m.screen == ScreenTasks {
 				m.moveTaskCursor(-1)
 			} else if m.cursor > 0 {
 				m.cursor--
+				m.detailOffset = 0
 			}
 		case "g":
 			if m.screen == ScreenTasks {
@@ -224,6 +229,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.LastAction = ActionReset
 			return m.startAction(ActionReset)
+		case "pgdown", "ctrl+f":
+			m.scrollDetails(detailMaxLines / 2)
+		case "pgup", "ctrl+b":
+			m.scrollDetails(-detailMaxLines / 2)
+		case "home":
+			m.detailOffset = 0
+		case "end":
+			m.scrollDetails(1 << 20)
 		}
 	case actionResultMsg:
 		m.processing = false
@@ -235,6 +248,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = clampCursor(m.cursor, len(m.run.Targets))
 				m.plan = ""
 				m.confirmTask = -1
+				m.detailOffset = 0
 			}
 			m.message = msg.err.Error()
 			return m, nil
@@ -258,6 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
 			m.plan = ""
 			m.confirmTask = -1
+			m.detailOffset = 0
 		}
 		m.message = msg.message
 	case progressEventMsg:
@@ -270,6 +285,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = clampCursor(m.cursor, len(m.run.Targets))
 			m.plan = ""
 			m.confirmTask = -1
+			m.detailOffset = 0
 			if msg.message != "" {
 				m.message = msg.message
 			} else if step := currentStepMessage(m.run); step != "" {
@@ -545,6 +561,28 @@ func clampCursor(cursor int, count int) int {
 	return cursor
 }
 
+func (m *Model) scrollDetails(delta int) {
+	if m.screen == ScreenTasks {
+		return
+	}
+	maxOffset := maxDetailOffset(m.renderTargetDetailsContent())
+	m.detailOffset += delta
+	if m.detailOffset < 0 {
+		m.detailOffset = 0
+	}
+	if m.detailOffset > maxOffset {
+		m.detailOffset = maxOffset
+	}
+}
+
+func maxDetailOffset(content string) int {
+	lines := splitLines(content)
+	if len(lines) <= detailMaxLines {
+		return 0
+	}
+	return len(lines) - detailMaxLines
+}
+
 func initialTargetCursor(run state.Run) int {
 	if run.CurrentTarget >= 0 && run.CurrentTarget < len(run.Targets) && run.Targets[run.CurrentTarget].Status != state.StatusDone {
 		return run.CurrentTarget
@@ -745,7 +783,7 @@ func (m Model) runView() tea.View {
 	if m.message != "" {
 		body = lipgloss.JoinVertical(lipgloss.Left, body, "", messageBlock(m.processing, m.message, innerWidth))
 	}
-	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   x reset   q quit", innerWidth))
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", actionBar("Actions", "enter/o open workspace   c continue   r refresh   p PR help   a abort   x reset   pgup/pgdn details   q quit", innerWidth))
 	return altView(frameStyle.Width(surfaceWidth).Render(body))
 }
 
@@ -831,7 +869,7 @@ func (m Model) renderTargetList() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m Model) renderTargetDetails() string {
+func (m Model) renderTargetDetailsContent() string {
 	if len(m.run.Targets) == 0 {
 		return subtleStyle.Render("No active target.\n\nNext action:\n  Start a run from the task screen or CLI.")
 	}
@@ -856,9 +894,42 @@ func (m Model) renderTargetDetails() string {
 		lines = append(lines, "", "Pull request:", "  "+target.PullRequestURL)
 	}
 	if targetIssueVisible(target.Status) {
-		lines = append(lines, "", targetIssueTitle(target.Status)+":", "  "+targetIssue(target))
+		lines = append(lines, "", targetIssueTitle(target.Status)+":")
+		for _, line := range strings.Split(wrapPlainText(targetIssue(target), rightWidth-6), "\n") {
+			lines = append(lines, "  "+line)
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderTargetDetails() string {
+	return m.clipDetails(m.renderTargetDetailsContent())
+}
+
+func (m Model) clipDetails(content string) string {
+	lines := splitLines(content)
+	if len(lines) <= detailMaxLines {
+		return content
+	}
+	maxOffset := len(lines) - detailMaxLines
+	offset := m.detailOffset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	visible := append([]string(nil), lines[offset:offset+detailMaxLines]...)
+	remaining := len(lines) - offset - detailMaxLines
+	switch {
+	case offset > 0 && remaining > 0:
+		visible = append(visible, subtleStyle.Render(fmt.Sprintf("… %d previous / %d more lines; use pgup/pgdn to scroll details", offset, remaining)))
+	case offset > 0:
+		visible = append(visible, subtleStyle.Render(fmt.Sprintf("… %d previous lines; use pgup/pgdn to scroll details", offset)))
+	default:
+		visible = append(visible, subtleStyle.Render(fmt.Sprintf("… %d more lines; use pgup/pgdn to scroll details", remaining)))
+	}
+	return strings.Join(visible, "\n")
 }
 
 func (m Model) writeMessage(b *strings.Builder) {
@@ -1043,12 +1114,51 @@ func messageBlock(processing bool, message string, width int) string {
 		label = "Working"
 		style = focusStyle
 	}
+	message = compactMessage(message, width-4, messageMaxLines)
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Width(width).
 		Padding(0, 1).
 		Render(style.Render(label + ": " + message))
+}
+
+func compactMessage(message string, width int, maxLines int) string {
+	lines := splitLines(wrapPlainText(message, width))
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	visible := append([]string(nil), lines[:maxLines]...)
+	visible = append(visible, fmt.Sprintf("… %d more lines hidden; open the workspace or retry outside the TUI for full output", len(lines)-maxLines))
+	return strings.Join(visible, "\n")
+}
+
+func wrapPlainText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			out = append(out, "")
+			continue
+		}
+		for len(runes) > width {
+			out = append(out, string(runes[:width]))
+			runes = runes[width:]
+		}
+		out = append(out, string(runes))
+	}
+	return strings.Join(out, "\n")
+}
+
+func splitLines(text string) []string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Split(text, "\n")
 }
 
 func altView(content string) tea.View {

@@ -98,9 +98,11 @@ Portable executables:
 Release artifacts are built and uploaded by GitHub Actions when pushing a version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.3
+git push origin v0.1.3
 ```
+
+The prepared release notes for `v0.1.3` live in `.github/releases/v0.1.3.md`. Use them when creating or reviewing the GitHub release.
 
 Build from source:
 
@@ -146,8 +148,8 @@ tasks:
   release:
     type: branch
     group: release
-    description: Move develop into release train branches
-    from: develop
+    description: Move current branch into release train branches
+    from: auto
     to:
       - release/*
       - main
@@ -159,7 +161,7 @@ Open the TUI:
 git spread
 ```
 
-Select `release`, press `Enter`, and Git Spread will apply `develop` to every resolved target.
+Select `release`, press `Enter`, and Git Spread will apply your current branch to every resolved target. Set `from` to a concrete branch name such as `develop` when you do not want current-branch behavior.
 The TUI first shows a confirmation plan; press `Enter` again to execute, or `Esc` to go back.
 
 ## Common Workflows
@@ -383,8 +385,8 @@ tasks:
   release:
     type: branch
     group: release
-    description: Move develop into release train branches
-    from: develop
+    description: Move current branch into release train branches
+    from: auto
     to:
       - release/*
       - main

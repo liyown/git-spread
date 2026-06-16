@@ -26,6 +26,25 @@ func TestNormalizeBranchUsesCurrentBranch(t *testing.T) {
 	}
 }
 
+func TestNormalizeTaskFromAutoUsesCurrentBranch(t *testing.T) {
+	cfg := config.Config{
+		Tasks: map[string]config.Task{
+			"release": {
+				Type: "branch",
+				From: "auto",
+				To:   []string{"release/*", "main"},
+			},
+		},
+	}
+	req, err := Normalize(CLIInput{Task: "release", CurrentBranch: "feature/login-fix", Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Source != "feature/login-fix" {
+		t.Fatalf("source = %q, want current branch", req.Source)
+	}
+}
+
 func TestNormalizeCommitRequiresInput(t *testing.T) {
 	_, err := Normalize(CLIInput{Kind: KindCommit, Targets: []string{"release/1.0"}})
 	if err == nil {
